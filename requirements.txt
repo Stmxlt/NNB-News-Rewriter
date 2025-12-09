@@ -1,0 +1,14 @@
+tiktoken
+sentence-transformers
+scikit-learn
+backoff
+openai
+tqdm
+matplotlib
+numpy
+torch
+nltk
+transformers
+rouge-score
+bert-score
+sacrebleu
