@@ -86,3 +86,7 @@ The Rewriter functions iteratively improve news articles using similar news refe
 - The system uses both local models (e.g., all-MiniLM-L6-v2 for similarity) and external LLM APIs for generation/evaluation.
 - Evaluation metrics include both automated scores (BLEU, ROUGE-L) and LLM-based assessments (G-Eval).
 - Iterative refinement leverages similar news articles as references to improve content quality.
+
+## Contributors
+- [lizhizhongpingguo](https://github.com/lizhizhongpingguo) - Write the top5_similar function for prompt.py to extracting similar news IDs
+- [Yichan521](https://github.com/Yichan521) - Optimize prompt logic for prompt.py to achieve a better rewriting effect
