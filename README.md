@@ -37,5 +37,52 @@ This project provides a comprehensive pipeline for generating, evaluating, and i
 
 Install dependencies via pip:
 ```bash
-pip install tiktoken sentence-transformers scikit-learn transformers torch rouge-score sacrebleu openai matplotlib nltk
+pip install -r requirements.txt
 ```
+
+## Configuration
+
+Set environment variables for API access in python files Rewriter.py, evaluation.py, dataset.py:
+```bash
+export OPENAI_API_KEY="your-api-key"
+export OPENAI_API_BASE="your-api-base-url"
+```
+
+## Preparing Models
+
+You can download these models from the [Hugging Face Hub](https://huggingface.co/) or [ModelScope](https://modelscope.cn/home) and place them in the corresponding directories, or use the `sentence-transformers` library to cache them locally:
+
+```python
+from sentence_transformers import SentenceTransformer
+
+# Download and save models to local_models directory
+models = [
+    "all-MiniLM-L6-v2",
+    "paraphrase-MiniLM-L6-v2",
+    "paraphrase-multilingual-MiniLM-L12-v2"
+]
+
+for model_name in models:
+    model = SentenceTransformer(model_name)
+    model.save(f"local_models/{model_name}")
+```
+
+## Usage
+### 1. Dataset Preparation
+Generate initial machine-written news from summaries using the provided dataset processor:
+```python
+python dataset/dataset.py
+```
+This processes cnn_dailymail.json and generates cnn_dailymail_updated.json with initial news articles.
+
+### 2. Run Iterative Rewriting
+Run the Rewriter function in Rewriter.py:
+```python
+python Rewriter.py
+```
+The Rewriter functions iteratively improve news articles using similar news references, quality feedback, and LLMs, enhancing quality while staying true to the original summary.
+
+## Notes
+- The system uses both local models (e.g., all-MiniLM-L6-v2 for similarity) and external LLM APIs for generation/evaluation.
+- Evaluation metrics include both automated scores (BLEU, ROUGE-L) and LLM-based assessments (G-Eval).
+- Iterative refinement leverages similar news articles as references to improve content quality.
