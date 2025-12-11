@@ -28,7 +28,6 @@ NNB-News-Rewriter/
 │   └── cnn_dailymail.json
 │   └── dataset.py
 ├── result/
-│   ├── cnn_dailymail_updated.json
 │   └── evaluation_result.json
 ├── local_models/
 ├── requirements.txt
