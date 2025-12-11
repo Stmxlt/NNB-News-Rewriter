@@ -161,10 +161,10 @@ def generate_eval_feedback(eval_prompt):
         {"role": "user", "content": eval_prompt}
     ]
     response = openai_client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V3.2-Exp",
+        model="moonshotai/Kimi-K2-Instruct-0905",
         messages=messages,
         temperature=0.4,
-        max_tokens=10000
+        max_tokens=8192
     )
     return response.choices[0].message.content
 
@@ -174,10 +174,10 @@ def generate_attack_feedback(attack_prompt):
         {"role": "user", "content": attack_prompt}
     ]
     response = openai_client.chat.completions.create(
-        model="deepseek-ai/DeepSeek-V3.2-Exp",
+        model="moonshotai/Kimi-K2-Instruct-0905",
         messages=messages,
         temperature=0.4,
-        max_tokens=15000
+        max_tokens=16384
     )
     return response.choices[0].message.content
 
@@ -213,7 +213,6 @@ def get_save_evaluation_feedback(json_path, target_id):
 def get_save_attacking_feedback(json_path, target_id):
     try:
         try:
-            print(f"[GenAPI] Starting to process id={target_id}")
             example_ids, attack_prompt = make_attacking_prompt(json_path, target_id)
             if not attack_prompt or not attack_prompt.strip():
                 print(f"[GenAPI] id={target_id} got empty attack prompt")
@@ -233,7 +232,6 @@ def get_save_attacking_feedback(json_path, target_id):
             return target_id, "prompt_unknown_error"
 
         try:
-            print(f"[GenAPI] Calling OpenAI for id={target_id}")
             feedback = generate_attack_feedback(attack_prompt)
             if not feedback or not feedback.strip():
                 print(f"[GenAPI] id={target_id} generated empty content")
@@ -252,13 +250,12 @@ def get_save_attacking_feedback(json_path, target_id):
         if not found:
             print(f"[GenAPI] id={target_id} not found in dataset")
             return target_id, "not_found"
-        print(f"[GenAPI] id={target_id} completed successfully")
         return target_id, "success"
 
     except Exception as e:
         print(f"[GenAPI] id={target_id} critical failure: {str(e)}")
         return target_id, "critical_error"
-
+        
 def sanity_check(json_path, label=""):
     try:
         with file_rw_lock:
@@ -277,12 +274,12 @@ def count_status(counter: dict, status: str):
 
 def Rewriter():
     result_path = 'evaluation_result.json'
-    json_path = 'dataset/cnn_dailymail.json'
+    json_path = 'dataset/cnn_dailymail_debug.json'
 
     reset_metrics_file(json_path=result_path)
     precompute_similar_ids(json_path)
 
-    max_workers = 8
+    max_workers = 16
     total_iterations = range(1, 6)
     total_ids = load_ids_from_json(json_path)
     total_rounds = len(total_iterations)
@@ -329,7 +326,6 @@ def Rewriter():
         print(f"Round {iteration}/{total_rounds} completed\n")
 
     plot_metrics()
-
 
 if __name__ == '__main__':
     Rewriter()
