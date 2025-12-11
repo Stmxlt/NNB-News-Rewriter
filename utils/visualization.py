@@ -56,6 +56,7 @@ def plot_metrics(json_path='./result/evaluation_result.json'):
         ax.grid(alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('../result/metrics_visualization.png', dpi=300)
+    plt.savefig('./result/metrics_visualization.png', dpi=300)
     plt.show()
+
     plt.close()
