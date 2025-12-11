@@ -6,6 +6,7 @@
 
 
 import os
+import json
 import backoff
 import openai
 import tiktoken
@@ -15,15 +16,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai import RateLimitError
-from prompt import make_detection_prompt, make_attacking_prompt, top5_ids_only, json2dict, dict2json
-from evaluation import evaluate_text_quality, create_dataset
-from visualization import plot_metrics
+from utils.prompt import make_detection_prompt, make_attacking_prompt, top5_ids_only, json2dict, dict2json
+from utils.evaluation import evaluate_text_quality, create_dataset
+from utils.visualization import plot_metrics
 
 print('===============Starting iteration===============')
 gpt_turbo_encoding = tiktoken.get_encoding("cl100k_base")
 openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
-    base_url=os.getenv("OPENAI_API_BASE", "your-api-link")
+    base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
+    timeout=120
 )
 openai.api_type = "open_ai"
 openai.api_version = None
@@ -272,8 +274,8 @@ def count_status(counter: dict, status: str):
         counter[status] = counter.get(status, 0) + 1
 
 def Rewriter():
-    result_path = 'evaluation_result.json'
-    json_path = 'dataset/cnn_dailymail.json'
+    result_path = 'result/evaluation_result.json'
+    json_path = 'dataset/cnn_dailymail_debug.json'
 
     reset_metrics_file(json_path=result_path)
     precompute_similar_ids(json_path)
