@@ -39,7 +39,7 @@ def plot_metrics(json_path='evaluation_result.json'):
         'g_eval': 'G-Eval'
     }
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
     axes = axes.flatten()
 
     for i, metric in enumerate(metrics):
@@ -59,3 +59,4 @@ def plot_metrics(json_path='evaluation_result.json'):
     plt.savefig('metrics_visualization.png', dpi=300)
     plt.show()
     plt.close()
+
