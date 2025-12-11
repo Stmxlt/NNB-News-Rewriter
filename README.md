@@ -10,7 +10,7 @@ This project provides a comprehensive pipeline for generating, evaluating, and i
 
 - **News Generation**: Generate initial news articles from summaries using state-of-the-art LLMs.
 - **Iterative Rewriting**: Refine news content through iterative optimization based on evaluation feedback.
-- **Quality Evaluation**: Assess news quality using multiple metrics (BLEU, METEOR, ROUGE-L, BERTScore, G-Eval).
+- **Quality Evaluation**: Assess news quality using multiple metrics (BERTScore, SMS, GPTScore, G-Eval).
 - **Similarity Matching**: Identify similar news articles to use as reference for improvement.
 - **Visualization**: Generate visual reports of evaluation metrics to track performance across iterations.
 
@@ -24,16 +24,6 @@ This project provides a comprehensive pipeline for generating, evaluating, and i
 - `dataset/cnn_dailymail.json`: Example dataset (CNN/DailyMail) used for training and testing.
 
 ## Dependencies
-
-- Python 3.8+
-- `tiktoken` for tokenization
-- `sentence-transformers` for similarity calculations
-- `scikit-learn` for cosine similarity
-- `transformers` and `torch` for BERTScore evaluation
-- `rouge-score` and `sacrebleu` for n-gram based metrics
-- `openai` for LLM API interactions
-- `matplotlib` for visualization
-- `nltk` for METEOR score calculation
 
 Install dependencies via pip:
 ```bash
@@ -58,8 +48,8 @@ from sentence_transformers import SentenceTransformer
 # Download and save models to local_models directory
 models = [
     "all-MiniLM-L6-v2",
-    "paraphrase-MiniLM-L6-v2",
-    "paraphrase-multilingual-MiniLM-L12-v2"
+    "bert-base-uncased",
+    "all-mpnet-base-v2"
 ]
 
 for model_name in models:
@@ -84,7 +74,7 @@ The Rewriter functions iteratively improve news articles using similar news refe
 
 ## Notes
 - The system uses both local models (e.g., all-MiniLM-L6-v2 for similarity) and external LLM APIs for generation/evaluation.
-- Evaluation metrics include both automated scores (BLEU, ROUGE-L) and LLM-based assessments (G-Eval).
+- Evaluation metrics include both automated scores (BERTScore, SMS) and LLM-based assessments (GPTScore, G-Eval).
 - Iterative refinement leverages similar news articles as references to improve content quality.
 
 ## Contributors
