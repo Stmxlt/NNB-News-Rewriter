@@ -16,11 +16,30 @@ This project provides a comprehensive pipeline for generating, evaluating, and i
 
 ## File Structure
 
-- `prompt.py`: Handles prompt generation for LLM interactions, including evaluation criteria and rewriting guidelines.
-- `evaluation.py`: Implements various evaluation metrics to assess news article quality.
+```plaintext
+NNB-News-Rewriter/
+├── Rewriter.py
+├── utils/
+│   ├── __init__.py
+│   ├── prompt.py
+│   ├── evaluation.py
+│   ├── visualization.py
+│   └── dataset.py
+├── dataset/
+│   └── cnn_dailymail.json
+├── result/
+│   ├── cnn_dailymail_updated.json
+│   └── evaluation_result.json
+├── local_models/
+├── requirements.txt
+└── README.md
+```
+
 - `Rewriter.py`: Core module for iterative news rewriting, integrating LLM calls and feedback loops.
-- `dataset/dataset.py`: Processes datasets to generate initial machine-written news from summaries.
-- `visualization.py`: Generates visualizations of evaluation metrics to monitor performance.
+- `utils/evaluation.py`: Implements various evaluation metrics to assess news article quality.
+- `utils/prompt.py`: Handles prompt generation for LLM interactions, including evaluation criteria and rewriting guidelines.
+- `utils/dataset.py`: Processes datasets to generate initial machine-written news from summaries.
+- `utils/visualization.py`: Generates visualizations of evaluation metrics to monitor performance.
 - `dataset/cnn_dailymail.json`: Example dataset (CNN/DailyMail) used for training and testing.
 
 ## Dependencies
