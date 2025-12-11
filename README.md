@@ -26,6 +26,7 @@ NNB-News-Rewriter/
 │   └── visualization.py
 ├── dataset/
 │   └── cnn_dailymail.json
+│   └── dataset.py
 ├── result/
 │   ├── cnn_dailymail_updated.json
 │   └── evaluation_result.json
@@ -39,6 +40,7 @@ NNB-News-Rewriter/
 - `utils/prompt.py`: Handles prompt generation for LLM interactions, including evaluation criteria and rewriting guidelines.
 - `utils/visualization.py`: Generates visualizations of evaluation metrics to monitor performance.
 - `dataset/cnn_dailymail.json`: Example dataset (CNN/DailyMail) used for training and testing.
+- `dataset/dataset.py`: Processes datasets to generate initial machine-written news from summaries.
 
 ## Dependencies
 
@@ -78,7 +80,8 @@ for model_name in models:
 ### 1. Dataset Preparation
 
 We provide a 1000 news articles dataset cnn_dailymail.json. You can utilize it directly.
-You can obtain news from [huggingface](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles.
+
+You can obtain news from [huggingface](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles. After convert parquet files to json files, you need to run dataset/dataset.py to add machine_news content.
 
 ### 2. Run Iterative Rewriting
 Run the Rewriter function in Rewriter.py:
