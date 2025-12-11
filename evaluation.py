@@ -1,9 +1,8 @@
 """
-@filename:Rewriter.py
+@filename:evaluation.py
 @author:Stmxlt
 @time:2025-10-20
 """
-
 
 import os
 import re
@@ -12,65 +11,73 @@ import numpy as np
 import torch
 import traceback
 import time
-from nltk.translate.meteor_score import single_meteor_score
-from transformers import AutoTokenizer
-from rouge_score import rouge_scorer as _rouge_scorer
+from transformers import AutoTokenizer, AutoModel
 from bert_score import score as bertscore_score
-from sacrebleu import BLEU
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 from openai import OpenAI
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from sentence_transformers import SentenceTransformer
+import ot
+from requests.exceptions import ConnectionError as RequestsConnectionError
 
-sacrebleu = BLEU(tokenize='13a', effective_order=True)
-rouge_scorer = _rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"[Evaluation Module] Initialization completed, using device: {device}")
 
 LOCAL_BERT_PATH = "./local_models/bert-base-uncased"
+LOCAL_SMS_MODEL_PATH = "./local_models/all-mpnet-base-v2"
 FALLBACK_BERT_MODEL = "microsoft/deberta-large-mnli"
 BERTSCORE_BATCH_SIZE = int(os.getenv("BERTSCORE_BATCH_SIZE", "16"))
+PARALLEL_WORKERS = 8
+
 openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
     base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
     timeout=30
 )
 
-
-def _safe_strip(x) -> str:
+def _safe_strip(x: Any) -> str:
+    """
+    Safely process a value to ensure it's a non-empty string.
+    Args:
+        x: Any input value to be processed
+    Returns:
+        str: Stripped string, empty string if input is None or non-string convertible
+    """
     if x is None:
         return ""
     if not isinstance(x, str):
         x = str(x)
     return x.strip()
 
-
 _num_regex = re.compile(r"(\d+(?:\.\d+)?)")
 
-
 def _to_float01_maybe(s: str) -> float:
-    if s is None:
+    """
+    Extract a number from text and normalize it to the range [0, 1].
+    Args:
+        s: Input string containing a number
+    Returns:
+        float: Normalized number between 0 and 1
+    """
+    if not s:
         return 0.0
     m = _num_regex.search(str(s))
     if not m:
         return 0.0
     val = float(m.group(1))
-    if val > 1.0:
-        val = val / 100.0 if val <= 100.0 else 1.0
+    if val > 1:
+        val = min(val / 100.0, 1.0)
     return max(0.0, min(1.0, val))
 
-
-def _pick_bert_model() -> Tuple[str, bool]:
-    if os.path.isdir(LOCAL_BERT_PATH):
-        expected_files = ["config.json", "pytorch_model.bin", "model.safetensors", "vocab.txt", "tokenizer.json"]
-        if any(os.path.exists(os.path.join(LOCAL_BERT_PATH, f)) for f in expected_files):
-            print(f"[BERTScore] Using local model at: {LOCAL_BERT_PATH}")
-            return LOCAL_BERT_PATH, True
-    print(f"[BERTScore] Local path not available, fallback to: {FALLBACK_BERT_MODEL}")
-    return FALLBACK_BERT_MODEL, False
-
-
 def create_dataset(json_path: str) -> list:
+    """
+    Load and validate a dataset from a JSON file.
+    Args:
+        json_path: Path to the JSON file containing the dataset
+    Returns:
+        list: List of valid dataset items with 'id', 'human_news', and 'abstract' fields
+    """
     try:
         if not os.path.exists(json_path):
             raise FileNotFoundError(f"File does not exist: {json_path}")
@@ -97,8 +104,14 @@ def create_dataset(json_path: str) -> list:
         print(f"[Data Loading] Failed: {str(e)}")
         return []
 
-
 def preprocess_english_text(text: str) -> str:
+    """
+    Preprocess English text by removing extra whitespace.
+    Args:
+        text: Input English text to be preprocessed
+    Returns:
+        str: Cleaned text with normalized whitespace
+    """
     text = _safe_strip(text)
     if not text:
         return ""
@@ -106,248 +119,109 @@ def preprocess_english_text(text: str) -> str:
     cleaned_text = " ".join(cleaned_text.split())
     return cleaned_text
 
+SMS_MODEL = None
 
-def evaluate_text_quality(data: list, iteration: int = None) -> dict:
-    # -------------------- Main Eval --------------------
-    metrics = {
-        'pre': {'meteor': [], 'rouge_l': [], 'bert_score': [], 'g_eval': []},
-        'current': {'meteor': [], 'rouge_l': [], 'bert_score': [], 'g_eval': []}
-    }
-    batch = {
-        'pre_raw': [], 'current_raw': [], 'human_raw': [],
-        'pre_seg': [], 'current_seg': [], 'human_seg': []
-    }
+def compute_sentence_movers_similarity(candidate: str, reference: str) -> float:
+    """
+    Compute Sentence Mover's Similarity between two texts.
+    Args:
+        candidate: Text to be evaluated
+        reference: Reference text for comparison
+    Returns:
+        float: Similarity score between 0 and 1
+    """
+    global SMS_MODEL
+    if SMS_MODEL is None:
+        try:
+            if not os.path.isdir(LOCAL_SMS_MODEL_PATH):
+                raise FileNotFoundError(f"SMS model not found at {LOCAL_SMS_MODEL_PATH}")
+            SMS_MODEL = SentenceTransformer(LOCAL_SMS_MODEL_PATH)
+        except Exception as e:
+            print(f"[SMS Error] Local model load failed: {e}")
+            return 0.0
 
-    hypotheses_pre = []
-    hypotheses_current = []
-    references_human = []
+    cand = candidate.strip()
+    ref = reference.strip()
+    if not cand or not ref:
+        return 0.0
 
-    total_items = len(data)
-    print(f"[Evaluation Progress] Calculating per-sample ngram metrics (total items: {total_items})")
+    cand_sents = [s.strip() for s in cand.split(".") if s.strip()]
+    ref_sents = [s.strip() for s in ref.split(".") if s.strip()]
 
-    for idx, item in enumerate(tqdm(data, desc="[Evaluation] Processing ngram metrics")):
-        item_id = str(item.get('id', 'unknown ID'))
+    if len(cand_sents) == 0 or len(ref_sents) == 0:
+        return 0.0
 
-        human_raw = _safe_strip(item.get('human_news', ''))
-
-        current_gpt_raw = _safe_strip(item.get('gpt_news', ''))
-        pre_gpt_news = _safe_strip(item.get('pre_gpt_news', ''))
-        pre_raw = pre_gpt_news if pre_gpt_news else _safe_strip(item.get('machine_news', ''))
-
-        skip_reason = []
-        if not human_raw:
-            skip_reason.append("human_news is empty")
-        if not current_gpt_raw:
-            skip_reason.append("gpt_news is empty")
-        if not pre_raw:
-            skip_reason.append("both pre_gpt_news and machine_news are empty")
-        if skip_reason:
-            print(f"\n[Evaluation Warning] ID={item_id} ({'、'.join(skip_reason)}), skipping this sample")
-            continue
-
-        human_seg = preprocess_english_text(human_raw)
-        current_seg = preprocess_english_text(current_gpt_raw)
-        pre_seg = preprocess_english_text(pre_raw)
-
-        hypotheses_pre.append(pre_seg)
-        hypotheses_current.append(current_seg)
-        references_human.append(human_seg)
-
-        batch['pre_raw'].append(pre_raw.replace('\n', ' ').strip())
-        batch['current_raw'].append(current_gpt_raw.replace('\n', ' ').strip())
-        batch['human_raw'].append(human_raw.replace('\n', ' ').strip())
-        batch['pre_seg'].append(pre_seg)
-        batch['current_seg'].append(current_seg)
-        batch['human_seg'].append(human_seg)
-
-        pre_meteor = single_meteor_score(reference=human_seg.split(), hypothesis=pre_seg.split(), alpha=0.9, beta=3.0,
-                                         gamma=0.5)
-        current_meteor = single_meteor_score(reference=human_seg.split(), hypothesis=current_seg.split())
-        pre_rouge = rouge_scorer.score(human_seg, pre_seg)['rougeL'].fmeasure
-        current_rouge = rouge_scorer.score(human_seg, current_seg)['rougeL'].fmeasure
-
-        metrics['pre']['meteor'].append(pre_meteor)
-        metrics['pre']['rouge_l'].append(pre_rouge)
-        metrics['current']['meteor'].append(current_meteor)
-        metrics['current']['rouge_l'].append(current_rouge)
-
-    valid_sample_count = len(references_human)
-
-    if valid_sample_count == 0:
-        print(f"[Evaluation Warning] No valid samples, all metrics return 0")
-        zero_avg = {k: 0.0 for k in metrics['pre'].keys()}
-        return {'iteration': iteration, 'detailed': metrics,
-                'pre_average': zero_avg, 'current_average': zero_avg}
-
-    bleu_pre_score = sacrebleu.corpus_score(hypotheses_pre, [references_human]).score / 100.0
-    bleu_current_score = sacrebleu.corpus_score(hypotheses_current, [references_human]).score / 100.0
-    print(f"[Evaluation] Corpus BLEU (pre): {bleu_pre_score:.4f}")
-    print(f"[Evaluation] Corpus BLEU (current): {bleu_current_score:.4f}")
-
-    print(f"[Evaluation Progress] Starting batch calculation of neural metrics (valid samples: {valid_sample_count})")
-
-    # -------- BERTScore --------
     try:
-        model_name, is_local = _pick_bert_model()
-        print(f"[BERTScore] Using model: {model_name} (local={is_local})")
-        use_baseline = (not is_local)
+        cand_vec = SMS_MODEL.encode(cand_sents)
+        ref_vec = SMS_MODEL.encode(ref_sents)
+    except:
+        return 0.0
 
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
+    cand_vec = np.array(cand_vec)
+    ref_vec = np.array(ref_vec)
 
-        def truncate_texts(texts, max_length=512):
-            truncated = []
-            for text in texts:
-                encoded = tokenizer(
-                    text,
-                    max_length=max_length,
-                    truncation=True,
-                    return_tensors='pt',
-                    padding=False
-                )
-                truncated_text = tokenizer.decode(encoded.input_ids[0], skip_special_tokens=True)
-                truncated.append(truncated_text)
-            return truncated
+    cost = 1 - np.dot(cand_vec, ref_vec.T) / \
+        (np.linalg.norm(cand_vec, axis=1)[:, None] * np.linalg.norm(ref_vec, axis=1)[None, :])
 
-        pre_raw_truncated = truncate_texts(batch['pre_raw'])
-        current_raw_truncated = truncate_texts(batch['current_raw'])
-        human_raw_truncated = truncate_texts(batch['human_raw'])
+    a = np.ones(len(cand_sents)) / len(cand_sents)
+    b = np.ones(len(ref_sents)) / len(ref_sents)
 
-        print("[BERTScore] Calculating scores...")
-        pre_bs_p, pre_bs_r, pre_bs_f = bertscore_score(
-            cands=pre_raw_truncated,
-            refs=human_raw_truncated,
-            lang="en",
-            model_type=model_name,
-            device=device,
-            rescale_with_baseline=use_baseline,
-            batch_size=BERTSCORE_BATCH_SIZE,
-            verbose=False,
-            num_layers=10
-        )
-        cur_bs_p, cur_bs_r, cur_bs_f = bertscore_score(
-            cands=current_raw_truncated,
-            refs=human_raw_truncated,
-            lang="en",
-            model_type=model_name,
-            device=device,
-            rescale_with_baseline=use_baseline,
-            batch_size=BERTSCORE_BATCH_SIZE,
-            verbose=False,
-            num_layers=10
-        )
-        metrics['pre']['bert_score'] = pre_bs_f.detach().cpu().tolist()[:valid_sample_count]
-        metrics['current']['bert_score'] = cur_bs_f.detach().cpu().tolist()[:valid_sample_count]
-        print("[BERTScore] Calculation completed")
-    except Exception as e:
-        print(f"[BERTScore Error] Full error message:\n{traceback.format_exc()}")
-        metrics['pre']['bert_score'] = [0.0] * valid_sample_count
-        metrics['current']['bert_score'] = [0.0] * valid_sample_count
-
-    # -------- G-Eval --------
     try:
-        print(f"[Evaluation Progress] Starting parallel G-Eval calculation (number of samples: {valid_sample_count})")
-        max_workers = int(os.getenv("G_EVAL_MAX_WORKERS", "8"))
-        print(f"[Evaluation Progress] Number of parallel threads: {max_workers}")
+        transport_cost = ot.emd2(a, b, cost)
+    except:
+        return 0.0
 
-        def parallel_worker(candidate: str, reference: str) -> float:
-            try:
-                return compute_g_eval(candidate, reference)
-            except Exception as e:
-                print(f"[G-Eval Worker Error] Calculation failed: {str(e)}")
-                return 0.0
+    sim = np.exp(-transport_cost)
+    return float(max(0.0, min(1.0, sim)))
 
-        pre_tasks = list(zip(batch['pre_raw'], batch['human_raw']))
-        pre_g_eval_scores = [0.0] * len(pre_tasks)
+def compute_gptscore(
+        candidate: str,
+        reference: str,
+        model: str = "deepseek-ai/DeepSeek-V3.2-Exp",
+        max_tokens: int = 50,
+        temperature: float = 0.0
+) -> float:
+    """
+    Compute similarity score using GPT model.
+    Args:
+        candidate: Text to be evaluated
+        reference: Reference text for comparison
+        model: Name of the GPT model to use
+        max_tokens: Maximum number of tokens for the model response
+        temperature: Sampling temperature for the model
+    Returns:
+        float: Similarity score between 0 and 1
+    """
+    cand = candidate.strip()
+    ref = reference.strip()
+    if not cand or not ref:
+        return 0.0
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(parallel_worker, cand, ref): idx
-                for idx, (cand, ref) in enumerate(pre_tasks)
-            }
+    prompt = f"""
+I will give you a human news article and a machine-generated article.
+Evaluate how similar the machine-generated article is to the human-written one.
+Return ONLY a score between 0 and 1.
 
-            for future in tqdm(
-                    as_completed(future_to_idx),
-                    total=len(future_to_idx),
-                    desc="[Evaluation] G-Eval (pre)"
-            ):
-                idx = future_to_idx[future]
-                try:
-                    pre_g_eval_scores[idx] = future.result()
-                except Exception as e:
-                    print(f"[G-Eval Result Error] task {idx} result fetch failed: {str(e)}")
-                    pre_g_eval_scores[idx] = 0.0
-        metrics['pre']['g_eval'] = pre_g_eval_scores
+Human article:
+{ref}
 
-        current_tasks = list(zip(batch['current_raw'], batch['human_raw']))
-        current_g_eval_scores = [0.0] * len(current_tasks)
+Machine article:
+{cand}
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(parallel_worker, cand, ref): idx
-                for idx, (cand, ref) in enumerate(current_tasks)
-            }
+Score (0-1):
+"""
 
-            for future in tqdm(
-                    as_completed(future_to_idx),
-                    total=len(future_to_idx),
-                    desc="[Evaluation] G-Eval (current)"
-            ):
-                idx = future_to_idx[future]
-                try:
-                    current_g_eval_scores[idx] = future.result()
-                except Exception as e:
-                    print(f"[G-Eval Result Error] task {idx} result fetch failed: {str(e)}")
-                    current_g_eval_scores[idx] = 0.0
-        metrics['current']['g_eval'] = current_g_eval_scores
-
-        print(f"[Evaluation Module] G-Eval computing success")
-    except Exception as e:
-        print(f"[Evaluation Warning] G-Eval computing failed (reason: {str(e)}), using 0 as placeholder")
-        metrics['pre']['g_eval'] = [0.0] * valid_sample_count
-        metrics['current']['g_eval'] = [0.0] * valid_sample_count
-
-    # -------- Averages --------
-    def mean_score(xs: List[float]) -> float:
-        return float(np.mean(xs)) if xs else 0.0
-
-    pre_average = {
-        'bleu': bleu_pre_score,
-        'meteor': mean_score(metrics['pre']['meteor']),
-        'rouge_l': mean_score(metrics['pre']['rouge_l']),
-        'bert_score': mean_score(metrics['pre']['bert_score']),
-        'g_eval': mean_score(metrics['pre']['g_eval'])
-    }
-    current_average = {
-        'bleu': bleu_current_score,
-        'meteor': mean_score(metrics['current']['meteor']),
-        'rouge_l': mean_score(metrics['current']['rouge_l']),
-        'bert_score': mean_score(metrics['current']['bert_score']),
-        'g_eval': mean_score(metrics['current']['g_eval'])
-    }
-
-    print("\n" + "=" * 180)
-    print(f"[Evaluation Result] Iteration count: {iteration if iteration is not None else 'unspecified'}")
-    print(f"[Evaluation Result] Previous round/machine-generated vs human original text (average metrics):")
-    print(
-        f"          BLEU: {pre_average['bleu']:.4f} | METEOR: {pre_average['meteor']:.4f} | ROUGE-L: {pre_average['rouge_l']:.4f} | "
-        f"BERTScore: {pre_average['bert_score']:.4f} | G-Eval: {pre_average['g_eval']:.4f}")
-    print(f"[Evaluation Result] Current GPT-generated vs human original text (average metrics):")
-    print(
-        f"          BLEU: {current_average['bleu']:.4f} | METEOR: {current_average['meteor']:.4f} | ROUGE-L: {current_average['rouge_l']:.4f} | "
-        f"BERTScore: {current_average['bert_score']:.4f} | G-Eval: {current_average['g_eval']:.4f}")
-    print("=" * 180 + "\n")
-
-    final_metrics = metrics
-    # final_metrics['pre']['bleu'] = [bleu_pre_score] * valid_sample_count
-    # final_metrics['current']['bleu'] = [bleu_current_score] * valid_sample_count
-
-    return {
-        'iteration': iteration,
-        'detailed': final_metrics,
-        'pre_average': pre_average,
-        'current_average': current_average
-    }
-
+    try:
+        resp = openai_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
+        out = resp.choices[0].message.content.strip()
+        return _to_float01_maybe(out)
+    except:
+        return 0.0
 
 def compute_g_eval(
         candidate: str,
@@ -355,18 +229,34 @@ def compute_g_eval(
         dimension: str = "consistency",
         model: str = "deepseek-ai/DeepSeek-V3.2-Exp",
         api_key: Optional[str] = None,
-        n_samples: int = 5,
+        n_samples: int = 1,
         max_retries: int = 3,
         max_token_length: int = 4000,
         temperature: float = 0.3,
         max_tokens: int = 10000
 ) -> float:
+    """
+    Evaluate text quality using G-Eval method.
+    Args:
+        candidate: Text to be evaluated
+        reference: Reference text for comparison
+        dimension: Evaluation dimension (consistency, fluency, coherence, relevance)
+        model: Name of the model to use
+        api_key: Optional API key for the model service
+        n_samples: Number of samples to generate for evaluation
+        max_retries: Maximum number of retries for failed requests
+        max_token_length: Maximum length for text truncation
+        temperature: Sampling temperature for the model
+        max_tokens: Maximum number of tokens for the model response
+    Returns:
+        float: Normalized evaluation score between 0 and 1
+    """
     cand = (candidate or "").strip()
     ref = (reference or "").strip()
     if not (cand and ref):
         return 0.0
 
-    def truncate_text(text, max_len):
+    def truncate_text(text: str, max_len: int) -> str:
         if len(text) > max_len:
             return text[:max_len]
         return text
@@ -376,7 +266,7 @@ def compute_g_eval(
 
     client = OpenAI(
         api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
-        base_url=os.getenv("OPENAI_API_BASE", "your-api-link")
+        base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
     )
 
     prompt_templates = {
@@ -485,12 +375,10 @@ Your score:"""
     retry_count = 0
     retry_delay = 1
 
-    from requests.exceptions import ConnectionError as RequestsConnectionError
-
     while len(all_scores) < n_samples and retry_count < max_retries:
         try:
             remaining = n_samples - len(all_scores)
-            current_n = min(remaining, 5)
+            current_n = 1
 
             response = client.chat.completions.create(
                 model=model,
@@ -500,7 +388,8 @@ Your score:"""
                 top_p=1.0,
                 frequency_penalty=0,
                 presence_penalty=0,
-                n=current_n
+                n=current_n,
+                timeout=30
             )
 
             batch_scores = [parse_score(choice.message.content) for choice in response.choices]
@@ -511,15 +400,13 @@ Your score:"""
 
         except RequestsConnectionError:
             retry_count += 1
-            sleep_time = 2 ** retry_count
-            time.sleep(sleep_time)
-
+            time.sleep(2 ** retry_count)
         except Exception as e:
             error_msg = str(e)
             retry_count += 1
+            print(f"[G-Eval Error] Sampling failed: {error_msg}, retrying {retry_count}th time")
             if "rate limit" in error_msg.lower():
-                sleep_time = 2 ** retry_count
-                time.sleep(sleep_time)
+                time.sleep(2 ** retry_count)
             elif "authentication" in error_msg.lower() or "model" in error_msg.lower() and "not found" in error_msg.lower():
                 break
             else:
@@ -527,7 +414,6 @@ Your score:"""
                 retry_delay *= 2
 
     valid_scores = [s for s in all_scores if s > 0]
-
     if not valid_scores:
         return 0.0
 
@@ -536,3 +422,265 @@ Your score:"""
     normalized_score = avg_score / max_score
 
     return round(max(0.0, min(1.0, normalized_score)), 4)
+
+def evaluate_text_quality(data: list, iteration: Optional[int] = None) -> Dict[str, Any]:
+    """
+    Evaluate text quality with multiple metrics, including per-sample details.
+    Args:
+        data: List of data items to evaluate, each containing 'id', 'human_news', 'gpt_news', and optionally 'pre_gpt_news' or 'machine_news'
+        iteration: Optional iteration number for tracking
+    Returns:
+        Dict[str, Any]: Evaluation results including detailed per-sample metrics and average scores
+    """
+    metrics = {
+        'pre': {
+            'bert_score': [], 'sms': [], 'gptscore': [], 'g_eval': []
+        },
+        'current': {
+            'bert_score': [], 'sms': [], 'gptscore': [], 'g_eval': []
+        }
+    }
+    
+    sample_details: List[Dict[str, Any]] = []
+
+    batch = {
+        'ids': [],
+        'pre_raw': [], 'current_raw': [], 'human_raw': []
+    }
+
+    total_items = len(data)
+    print(f"[Evaluation Progress] Calculating per-sample metrics (total: {total_items})")
+
+    for item in tqdm(data, desc="[Collecting Samples]"):
+        item_id = item.get('id', f"unknown_{len(batch['ids'])}")
+        human_raw = _safe_strip(item.get('human_news'))
+        current_gpt_raw = _safe_strip(item.get('gpt_news'))
+        pre_raw = _safe_strip(item.get('pre_gpt_news') or item.get("machine_news"))
+
+        if not (human_raw and current_gpt_raw and pre_raw):
+            print(f"[Warning] Skipping invalid sample (id: {item_id}) - missing text content")
+            continue
+
+        sample_metrics = {
+            'id': item_id,
+            'pre': {},
+            'current': {}
+        }
+
+        pre_sms = compute_sentence_movers_similarity(pre_raw, human_raw)
+        current_sms = compute_sentence_movers_similarity(current_gpt_raw, human_raw)
+        metrics['pre']['sms'].append(pre_sms)
+        metrics['current']['sms'].append(current_sms)
+        sample_metrics['pre']['sms'] = pre_sms
+        sample_metrics['current']['sms'] = current_sms
+
+        batch['ids'].append(item_id)
+        batch['pre_raw'].append(pre_raw)
+        batch['current_raw'].append(current_gpt_raw)
+        batch['human_raw'].append(human_raw)
+        sample_details.append(sample_metrics)
+
+    try:
+        def gptscore_worker(cand: str, ref: str, sample_id: str) -> Tuple[str, float]:
+            try:
+                score = compute_gptscore(cand, ref)
+                return (sample_id, score)
+            except Exception as e:
+                print(f"[GPTScore Worker Error] Sample {sample_id}: {str(e)}")
+                return (sample_id, 0.0)
+
+        pre_tasks = list(zip(batch['pre_raw'], batch['human_raw'], batch['ids']))
+        cur_tasks = list(zip(batch['current_raw'], batch['human_raw'], batch['ids']))
+
+        pre_gpt_scores = {id: 0.0 for id in batch['ids']}
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = [ex.submit(gptscore_worker, c, r, idx) for c, r, idx in pre_tasks]
+            for f in tqdm(as_completed(futures), total=len(futures), desc="GPTScore pre"):
+                sample_id, score = f.result()
+                pre_gpt_scores[sample_id] = score
+
+        cur_gpt_scores = {id: 0.0 for id in batch['ids']}
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = [ex.submit(gptscore_worker, c, r, idx) for c, r, idx in cur_tasks]
+            for f in tqdm(as_completed(futures), total=len(futures), desc="GPTScore current"):
+                sample_id, score = f.result()
+                cur_gpt_scores[sample_id] = score
+
+        metrics['pre']['gptscore'] = [pre_gpt_scores[id] for id in batch['ids']]
+        metrics['current']['gptscore'] = [cur_gpt_scores[id] for id in batch['ids']]
+        
+        for sample in sample_details:
+            sample_id = sample['id']
+            sample['pre']['gptscore'] = pre_gpt_scores[sample_id]
+            sample['current']['gptscore'] = cur_gpt_scores[sample_id]
+
+    except Exception as e:
+        print("[GPTScore ERROR]", e)
+        pre_gpt_list = [0.0] * len(batch['pre_raw'])
+        cur_gpt_list = [0.0] * len(batch['pre_raw'])
+        metrics['pre']['gptscore'] = pre_gpt_list
+        metrics['current']['gptscore'] = cur_gpt_list
+        for sample in sample_details:
+            sample['pre']['gptscore'] = 0.0
+            sample['current']['gptscore'] = 0.0
+
+    try:
+        LOCAL_BERT_PATH = "./local_models/bert-base-uncased"
+        REQUIRED_FILES = [
+            "config.json",
+            "vocab.txt",
+            "pytorch_model.bin"
+        ]
+    
+        def validate_local_model(path: str) -> bool:
+            if not os.path.isdir(path):
+                raise FileNotFoundError(f"Local model directory does not exist: {path}")
+            missing = []
+            for f in REQUIRED_FILES:
+                file_path = os.path.join(path, f)
+                if not os.path.exists(file_path):
+                    if f == "pytorch_model.bin" and os.path.exists(os.path.join(path, "model.safetensors")):
+                        continue
+                    missing.append(f)
+            if missing:
+                raise FileNotFoundError(f"Local model missing key files: {missing}")
+            return True
+    
+        validate_local_model(LOCAL_BERT_PATH)
+        print(f"[BERTScore] Local model validation passed, path: {LOCAL_BERT_PATH}")
+    
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_CACHE"] = LOCAL_BERT_PATH
+    
+        tokenizer = AutoTokenizer.from_pretrained(
+            LOCAL_BERT_PATH,
+            local_files_only=True
+        )
+        print(f"[BERTScore Debug] Tokenizer loaded successfully from local path")
+    
+        model = AutoModel.from_pretrained(
+            LOCAL_BERT_PATH,
+            local_files_only=True
+        )
+        print(f"[BERTScore Debug] Model weights loaded successfully from local path")
+    
+        def truncate_list(texts: List[str]) -> List[str]:
+            out = []
+            for t in texts:
+                ids = tokenizer(t, truncation=True, max_length=512, return_tensors="pt")
+                out.append(tokenizer.decode(ids.input_ids[0], skip_special_tokens=True))
+            return out
+        pre_t = truncate_list(batch['pre_raw'])
+        cur_t = truncate_list(batch['current_raw'])
+        hum_t = truncate_list(batch['human_raw'])
+    
+        num_layers = 12
+        print(f"[BERTScore Debug] Starting calculation, model layers: {num_layers}, device: {device}")
+        pre_bs_p, pre_bs_r, pre_bs_f = bertscore_score(
+            pre_t, hum_t,
+            lang="en",
+            model_type=LOCAL_BERT_PATH,
+            num_layers=num_layers,
+            device=device
+        )
+        cur_bs_p, cur_bs_r, cur_bs_f = bertscore_score(
+            cur_t, hum_t,
+            lang="en",
+            model_type=LOCAL_BERT_PATH,
+            num_layers=num_layers,
+            device=device
+        )
+    
+        pre_bs_list = pre_bs_f.cpu().tolist()
+        cur_bs_list = cur_bs_f.cpu().tolist()
+        metrics['pre']['bert_score'] = pre_bs_list
+        metrics['current']['bert_score'] = cur_bs_list
+        
+        for i, sample in enumerate(sample_details):
+            sample['pre']['bert_score'] = pre_bs_list[i]
+            sample['current']['bert_score'] = cur_bs_list[i]
+    
+    except Exception as e:
+        print(f"[BERTScore ERROR] Detailed error: {str(e)}")
+        print(f"[BERTScore ERROR] Stack trace: {traceback.format_exc()}")
+        pre_bs_list = [0.0] * len(batch['pre_raw'])
+        cur_bs_list = [0.0] * len(batch['pre_raw'])
+        metrics['pre']['bert_score'] = pre_bs_list
+        metrics['current']['bert_score'] = cur_bs_list
+        for sample in sample_details:
+            sample['pre']['bert_score'] = 0.0
+            sample['current']['bert_score'] = 0.0
+            print(f"[Sample {sample['id']}] BERTScore - pre: 0.0000, current: 0.0000 (error)")
+
+    try:
+        def worker(cand: str, ref: str, sample_id: str) -> Tuple[str, float]:
+            try:
+                score = compute_g_eval(cand, ref)
+                return (sample_id, score)
+            except Exception as e:
+                print(f"[G-Eval Worker Error] Sample {sample_id}: {str(e)}")
+                return (sample_id, 0.0)
+
+        pre_tasks = list(zip(batch['pre_raw'], batch['human_raw'], batch['ids']))
+        cur_tasks = list(zip(batch['current_raw'], batch['human_raw'], batch['ids']))
+
+        pre_geval_scores = {id: 0.0 for id in batch['ids']}
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = [ex.submit(worker, c, r, idx) for c, r, idx in pre_tasks]
+            for f in tqdm(as_completed(futures), total=len(futures), desc="G-Eval pre"):
+                sample_id, score = f.result()
+                pre_geval_scores[sample_id] = score
+
+        cur_geval_scores = {id: 0.0 for id in batch['ids']}
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
+            futures = [ex.submit(worker, c, r, idx) for c, r, idx in cur_tasks]
+            for f in tqdm(as_completed(futures), total=len(futures), desc="G-Eval current"):
+                sample_id, score = f.result()
+                cur_geval_scores[sample_id] = score
+
+        metrics['pre']['g_eval'] = [pre_geval_scores[id] for id in batch['ids']]
+        metrics['current']['g_eval'] = [cur_geval_scores[id] for id in batch['ids']]
+        
+        for sample in sample_details:
+            sample_id = sample['id']
+            sample['pre']['g_eval'] = pre_geval_scores[sample_id]
+            sample['current']['g_eval'] = cur_geval_scores[sample_id]
+
+    except Exception as e:
+        print("[G-Eval ERROR]", e)
+        pre_geval_list = [0.0] * len(batch['pre_raw'])
+        cur_geval_list = [0.0] * len(batch['pre_raw'])
+        metrics['pre']['g_eval'] = pre_geval_list
+        metrics['current']['g_eval'] = cur_geval_list
+        for sample in sample_details:
+            sample['pre']['g_eval'] = 0.0
+            sample['current']['g_eval'] = 0.0
+            print(f"[Sample {sample['id']}] G-Eval - pre: 0.0000, current: 0.0000 (error)")
+
+    def mean(xs: List[float]) -> float:
+        xs = [x for x in xs if isinstance(x, (int, float))]
+        return float(np.mean(xs)) if xs else 0.0
+
+    pre_avg = {
+        "bert_score": mean(metrics['pre']['bert_score']),
+        "sms": mean(metrics['pre']['sms']),
+        "gptscore": mean(metrics['pre']['gptscore']),
+        "g_eval": mean(metrics['pre']['g_eval'])
+    }
+
+    cur_avg = {
+        "bert_score": mean(metrics['current']['bert_score']),
+        "sms": mean(metrics['current']['sms']),
+        "gptscore": mean(metrics['current']['gptscore']),
+        "g_eval": mean(metrics['current']['g_eval'])
+    }
+
+    return {
+        "iteration": iteration,
+        "detailed": {
+            "samples": sample_details,
+            "metrics": metrics
+        },
+        "pre_average": pre_avg,
+        "current_average": cur_avg
+    }
