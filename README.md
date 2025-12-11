@@ -23,8 +23,7 @@ NNB-News-Rewriter/
 │   ├── __init__.py
 │   ├── prompt.py
 │   ├── evaluation.py
-│   ├── visualization.py
-│   └── dataset.py
+│   └── visualization.py
 ├── dataset/
 │   └── cnn_dailymail.json
 ├── result/
@@ -38,7 +37,6 @@ NNB-News-Rewriter/
 - `Rewriter.py`: Core module for iterative news rewriting, integrating LLM calls and feedback loops.
 - `utils/evaluation.py`: Implements various evaluation metrics to assess news article quality.
 - `utils/prompt.py`: Handles prompt generation for LLM interactions, including evaluation criteria and rewriting guidelines.
-- `utils/dataset.py`: Processes datasets to generate initial machine-written news from summaries.
 - `utils/visualization.py`: Generates visualizations of evaluation metrics to monitor performance.
 - `dataset/cnn_dailymail.json`: Example dataset (CNN/DailyMail) used for training and testing.
 
@@ -66,8 +64,8 @@ from sentence_transformers import SentenceTransformer
 
 # Download and save models to local_models directory
 models = [
-    "all-MiniLM-L6-v2",
     "bert-base-uncased",
+    "all-MiniLM-L6-v2",
     "all-mpnet-base-v2"
 ]
 
@@ -78,11 +76,9 @@ for model_name in models:
 
 ## Usage
 ### 1. Dataset Preparation
-Generate initial machine-written news from summaries using the provided dataset processor:
-```python
-python dataset/dataset.py
-```
-This processes cnn_dailymail.json and generates cnn_dailymail_updated.json with initial news articles.
+
+We provide a 1000 news articles dataset cnn_dailymail.json. You can utilize it directly.
+You can obtain news from [huggingface](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles.
 
 ### 2. Run Iterative Rewriting
 Run the Rewriter function in Rewriter.py:
