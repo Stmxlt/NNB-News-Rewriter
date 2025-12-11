@@ -61,6 +61,7 @@ export OPENAI_API_BASE="your-api-base-url"
 
 You can download these models from the [Hugging Face Hub](https://huggingface.co/) or [ModelScope](https://modelscope.cn/home) and place them in the corresponding directories, or use the `sentence-transformers` library to cache them locally:
 
+For Hugging Face:
 ```python
 from sentence_transformers import SentenceTransformer
 
@@ -75,13 +76,20 @@ for model_name in models:
     model = SentenceTransformer(model_name)
     model.save(f"local_models/{model_name}")
 ```
+For ModelScope:
+```bash
+pip install modelscope
+modelscope download --model google-bert/bert-base-uncased
+modelscope download --model sentence-transformers/all-MiniLM-L6-v2
+modelscope download --model sentence-transformers/all-mpnet-base-v2
+```
 
 ## Usage
 ### 1. Dataset Preparation
 
 We provide a 1000 news articles dataset cnn_dailymail.json. You can utilize it directly.
 
-You can obtain news from [huggingface](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles. After convert parquet files to json files, you need to run dataset/dataset.py to add machine_news content.
+You can obtain news from [Hugging Face Hub](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles. After convert parquet files to json files, you need to run dataset/dataset.py to add machine_news content.
 
 ### 2. Run Iterative Rewriting
 Run the Rewriter function in Rewriter.py:
