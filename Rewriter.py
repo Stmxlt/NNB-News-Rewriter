@@ -6,7 +6,6 @@
 
 
 import os
-import json
 import backoff
 import openai
 import tiktoken
