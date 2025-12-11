@@ -273,7 +273,7 @@ def count_status(counter: dict, status: str):
 
 def Rewriter():
     result_path = 'evaluation_result.json'
-    json_path = 'dataset/cnn_dailymail_debug.json'
+    json_path = 'dataset/cnn_dailymail.json'
 
     reset_metrics_file(json_path=result_path)
     precompute_similar_ids(json_path)
