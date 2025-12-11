@@ -25,17 +25,17 @@ def plot_metrics(json_path='evaluation_result.json'):
         print("Metric data is empty, cannot visualize")
         return
 
+    # Use default font for English
     plt.rcParams["axes.unicode_minus"] = False
 
     first_pre = metrics_data[0]['pre_average']
     iterations = [item['iteration'] for item in metrics_data]
 
-    metrics = ['bleu', 'meteor', 'rouge_l', 'bert_score', 'g_eval']
+    metrics = ['bert_score', 'sms', 'gptscore', 'g_eval']
     metric_display_names = {
-        'bleu': 'BLEU',
-        'meteor': 'METEOR',
-        'rouge_l': 'ROUGE-L',
         'bert_score': 'BERTScore',
+        'sms': 'SMS',
+        'gptscore': 'GPTScore',
         'g_eval': 'G-Eval'
     }
 
