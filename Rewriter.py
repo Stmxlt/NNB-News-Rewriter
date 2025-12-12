@@ -273,9 +273,29 @@ def count_status(counter: dict, status: str):
     with _error_lock:
         counter[status] = counter.get(status, 0) + 1
 
+def process_and_save_txts(input_file, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    
+    tag_pattern = re.compile(r'\*\*(Title|Lead|Body|Conclusion):?\*\*\s*')
+    newline_pattern = re.compile(r'\n+')
+    
+    with open(input_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    for item in data:
+        if 'id' in item and 'pre_gpt_news' in item:
+            content = item['pre_gpt_news']
+            content = tag_pattern.sub('', content)
+            content = newline_pattern.sub('\n', content)
+            content = content.strip()
+            txt_path = os.path.join(output_dir, f"news_{item['id']}.txt")
+            with open(txt_path, 'w', encoding='utf-8') as txt_file:
+                txt_file.write(content)
+
 def Rewriter():
     result_path = 'result/evaluation_result.json'
-    json_path = 'dataset/cnn_dailymail.json'
+    json_path = 'dataset/cnn_dailymail_debug.json'
+    text_path = 'result/news'
 
     reset_metrics_file(json_path=result_path)
     precompute_similar_ids(json_path)
@@ -327,6 +347,7 @@ def Rewriter():
         print(f"Round {iteration}/{total_rounds} completed\n")
 
     plot_metrics()
+    process_and_save_txts(json_path, text_path)
 
 if __name__ == '__main__':
     Rewriter()
