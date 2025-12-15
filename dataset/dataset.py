@@ -19,7 +19,7 @@ openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
     base_url=os.getenv("OPENAI_API_BASE", "your-api-link")
 )
-GPT_MODEL = "gpt-5-2025-08-07"
+GPT_MODEL = "your-model-api-name"
 PROMPT_TEMPLATE = "Please create a complete and detailed news article based on the following news abstract. Keep the content coherent and logically clear, and ensure the language style complies with news reporting standards:\n{abstract}"
 MAX_WORKERS = 16
 
