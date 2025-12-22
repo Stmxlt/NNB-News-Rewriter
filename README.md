@@ -1,7 +1,7 @@
 # NNB-News-Rewriter
 
 <p align="center">
-<img src="icon.png" width="500"/>
+<img src="icon.png" width="200"/>
 </p>
 
 This project is a news optimizing and rewriting tool for the New News Broadcasting (NNB) system, designed to enhance news articles generated from summaries through iterative refinement and quality evaluation.
