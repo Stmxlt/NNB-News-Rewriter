@@ -17,9 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 TARGET_JSON_FILE = "cnn_dailymail.json"
 openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
-    base_url=os.getenv("OPENAI_API_BASE", "your-api-link")
+    base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
+    timeout=120,
 )
-GPT_MODEL = "your-model-api-name"
 PROMPT_TEMPLATE = "Please create a complete and detailed news article based on the following news abstract. Keep the content coherent and logically clear, and ensure the language style complies with news reporting standards:\n{abstract}"
 MAX_WORKERS = 16
 
@@ -34,7 +34,7 @@ def generate_news(abstract):
         {"role": "user", "content": PROMPT_TEMPLATE.format(abstract=abstract)}
     ]
     response = openai_client.chat.completions.create(
-        model=GPT_MODEL,
+        model="moonshotai/Kimi-K2-Instruct-0905",
         messages=messages
     )
     return response.choices[0].message.content
