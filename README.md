@@ -77,7 +77,7 @@ pip install -r requirements.txt
 
 ```bash
 export OPENAI_API_KEY="your-api-key"
-export OPENAI_API_BASE="your-api-base-url"
+export OPENAI_API_BASE="your-api-link"
 ```
 
 ### Optional Environment Variables
