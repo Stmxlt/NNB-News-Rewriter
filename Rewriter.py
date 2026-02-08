@@ -6,6 +6,7 @@
 
 
 import os
+import re
 import json
 import backoff
 import openai
@@ -16,17 +17,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from openai import RateLimitError
-from utils.prompt import make_detection_prompt, make_attacking_prompt, top5_ids_only, json2dict, dict2json
-from utils.evaluation import evaluate_text_quality, create_dataset
-from utils.visualization import plot_metrics
 
-print('===============Starting iteration===============')
+from utils.prompt import make_detection_prompt, make_attacking_prompt, top5_ids_only, json2dict, dict2json
+from utils.evaluation import create_dataset
+from utils.visualization import plot_metrics
+from utils.per_news_evaluation import PerNewsEvaluation, evaluate_with_per_news_tracking
+
+
+os.makedirs("result", exist_ok=True)
+print("===============Starting iteration===============")
+
 gpt_turbo_encoding = tiktoken.get_encoding("cl100k_base")
 openai_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
     base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
     timeout=120
 )
+
 openai.api_type = "open_ai"
 openai.api_version = None
 
@@ -75,7 +82,7 @@ def load_ids_from_json(json_path: str):
         print(f"[Config] Failed to load ids from {json_path}: {e}")
         return []
 
-def precompute_similar_ids(json_path):
+def precompute_similar_ids(json_path: str):
     with file_rw_lock:
         news_data = json2dict(json_path)
     total_items = len(news_data)
@@ -97,8 +104,7 @@ def precompute_similar_ids(json_path):
             if _is_none_strip_error(e):
                 _log_none_strip("precompute_similar_ids", target_id)
                 continue
-            else:
-                raise
+            raise
         except Exception as e:
             print(f"[precompute_similar_ids] Failed on id={target_id}: {e}")
             continue
@@ -108,7 +114,7 @@ def precompute_similar_ids(json_path):
     with file_rw_lock:
         dict2json(news_data, json_path)
 
-def update_gpt_news(json_path):
+def update_gpt_news(json_path: str):
     with file_rw_lock:
         news_data = json2dict(json_path)
         for item in news_data:
@@ -129,16 +135,18 @@ def update_gpt_news(json_path):
                     raise
         dict2json(news_data, json_path)
 
-def save_metrics_to_json(eval_results, json_path):
+def save_metrics_to_json(eval_results: dict, json_path: str):
     save_data = {
-        'iteration': eval_results['iteration'],
-        'pre_average': eval_results['pre_average'],
-        'current_average': eval_results['current_average']
+        "iteration": eval_results["iteration"],
+        "pre_average": eval_results["pre_average"],
+        "current_average": eval_results["current_average"],
     }
+
     def round_dict(d, decimal=4):
         return {k: round(v, decimal) for k, v in d.items()}
-    save_data['pre_average'] = round_dict(save_data['pre_average'])
-    save_data['current_average'] = round_dict(save_data['current_average'])
+
+    save_data["pre_average"] = round_dict(save_data["pre_average"])
+    save_data["current_average"] = round_dict(save_data["current_average"])
 
     try:
         with file_rw_lock:
@@ -148,7 +156,7 @@ def save_metrics_to_json(eval_results, json_path):
     except Exception as e:
         print(f"Failed to save metrics: {str(e)}")
 
-def reset_metrics_file(json_path):
+def reset_metrics_file(json_path: str):
     try:
         with file_rw_lock:
             dict2json([], json_path)
@@ -157,41 +165,36 @@ def reset_metrics_file(json_path):
         print(f"Failed to reset metrics file: {str(e)}")
 
 @backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
-def generate_eval_feedback(eval_prompt):
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "user", "content": eval_prompt}
-    ]
+def generate_eval_feedback(eval_prompt: str) -> str:
+    messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": eval_prompt}]
     response = openai_client.chat.completions.create(
         model="moonshotai/Kimi-K2-Instruct-0905",
         messages=messages,
         temperature=0.4,
-        max_tokens=8192
+        max_tokens=8192,
     )
     return response.choices[0].message.content
 
 @backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
-def generate_attack_feedback(attack_prompt):
-    messages: list[ChatCompletionMessageParam] = [
-        {"role": "user", "content": attack_prompt}
-    ]
+def generate_attack_feedback(attack_prompt: str) -> str:
+    messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": attack_prompt}]
     response = openai_client.chat.completions.create(
         model="moonshotai/Kimi-K2-Instruct-0905",
         messages=messages,
         temperature=0.4,
-        max_tokens=16384
+        max_tokens=16384,
     )
     return response.choices[0].message.content
 
-def get_save_evaluation_feedback(json_path, target_id):
+def get_save_evaluation_feedback(json_path: str, target_id):
     try:
         try:
-            example_ids, eval_prompt = make_detection_prompt(json_path, target_id)
+            _, eval_prompt = make_detection_prompt(json_path, target_id)
         except AttributeError as e:
             if _is_none_strip_error(e):
                 _log_none_strip("get_save_evaluation_feedback", target_id)
                 return target_id, "error"
-            else:
-                raise
+            raise
 
         try:
             feedback = generate_eval_feedback(eval_prompt)
@@ -211,10 +214,14 @@ def get_save_evaluation_feedback(json_path, target_id):
         print(f"Evaluation failed (ID: {target_id}): {str(e)}")
         return target_id, "error"
 
-def get_save_attacking_feedback(json_path, target_id):
+def get_save_attacking_feedback(json_path: str, target_id, iteration: int):
+    """
+    IMPORTANT: iteration is passed in so prompt.py can fetch the correct per-news metrics
+    using the new v3 per_news_metrics.json structure.
+    """
     try:
         try:
-            example_ids, attack_prompt = make_attacking_prompt(json_path, target_id)
+            _, attack_prompt = make_attacking_prompt(json_path, target_id, iteration)
             if not attack_prompt or not attack_prompt.strip():
                 print(f"[GenAPI] id={target_id} got empty attack prompt")
                 return target_id, "empty_prompt"
@@ -222,9 +229,8 @@ def get_save_attacking_feedback(json_path, target_id):
             if _is_none_strip_error(e):
                 _log_none_strip("get_save_attacking_feedback", target_id)
                 return target_id, "none_strip_error"
-            else:
-                print(f"[GenAPI] id={target_id} failed to make prompt (AttributeError): {str(e)}")
-                return target_id, "prompt_attribute_error"
+            print(f"[GenAPI] id={target_id} failed to make prompt (AttributeError): {str(e)}")
+            return target_id, "prompt_attribute_error"
         except ValueError as e:
             print(f"[GenAPI] id={target_id} failed to make prompt (ValueError): {str(e)}")
             return target_id, "prompt_value_error"
@@ -256,16 +262,18 @@ def get_save_attacking_feedback(json_path, target_id):
     except Exception as e:
         print(f"[GenAPI] id={target_id} critical failure: {str(e)}")
         return target_id, "critical_error"
-        
-def sanity_check(json_path, label=""):
+
+def sanity_check(json_path: str, label: str = ""):
     try:
         with file_rw_lock:
             data = json2dict(json_path)
         total = len(data)
         non_empty_gpt = sum(1 for x in data if isinstance(x.get("gpt_news"), str) and x["gpt_news"].strip())
         non_empty_pre = sum(1 for x in data if isinstance(x.get("pre_gpt_news"), str) and x["pre_gpt_news"].strip())
-        print(f"[Sanity {label}] gpt_news non-empty: {non_empty_gpt}/{total} ({(non_empty_gpt/total if total else 0):.1%}); "
-              f"pre_gpt_news non-empty: {non_empty_pre}/{total} ({(non_empty_pre/total if total else 0):.1%})")
+        print(
+            f"[Sanity {label}] gpt_news non-empty: {non_empty_gpt}/{total} ({(non_empty_gpt/total if total else 0):.1%}); "
+            f"pre_gpt_news non-empty: {non_empty_pre}/{total} ({(non_empty_pre/total if total else 0):.1%})"
+        )
     except Exception as e:
         print(f"[Sanity {label}] check failed: {e}")
 
@@ -273,31 +281,42 @@ def count_status(counter: dict, status: str):
     with _error_lock:
         counter[status] = counter.get(status, 0) + 1
 
-def process_and_save_txts(input_file, output_dir):
+def process_and_save_txts(input_file: str, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
-    
-    tag_pattern = re.compile(r'\*\*(Title|Lead|Body|Conclusion):?\*\*\s*')
-    newline_pattern = re.compile(r'\n+')
-    
-    with open(input_file, 'r', encoding='utf-8') as f:
+
+    tag_pattern = re.compile(r"\*\*(Title|Lead|Body|Conclusion):?\*\*\s*")
+    newline_pattern = re.compile(r"\n+")
+
+    with open(input_file, "r", encoding="utf-8") as f:
         data = json.load(f)
-    
+
     for item in data:
-        if 'id' in item and 'pre_gpt_news' in item:
-            content = item['pre_gpt_news']
-            content = tag_pattern.sub('', content)
-            content = newline_pattern.sub('\n', content)
+        if "id" in item and "pre_gpt_news" in item:
+            content = item["pre_gpt_news"]
+            content = tag_pattern.sub("", content)
+            content = newline_pattern.sub("\n", content)
             content = content.strip()
             txt_path = os.path.join(output_dir, f"news_{item['id']}.txt")
-            with open(txt_path, 'w', encoding='utf-8') as txt_file:
+            with open(txt_path, "w", encoding="utf-8") as txt_file:
                 txt_file.write(content)
 
 def Rewriter():
-    result_path = 'result/evaluation_result.json'
-    json_path = 'dataset/cnn_dailymail_debug.json'
-    text_path = 'result/news'
+    result_path = "result/evaluation_result.json"
+    json_path = "dataset/cnn_dailymail_debug.json"
+    text_path = "result/news"
+
+    per_news_evaluator = PerNewsEvaluation()
 
     reset_metrics_file(json_path=result_path)
+
+    with file_rw_lock:
+        data = json2dict(json_path)
+        for item in data:
+            item["pre_gpt_news"] = ""
+            item["gpt_news"] = ""
+            item["evaluation"] = ""
+        dict2json(data, json_path)
+
     precompute_similar_ids(json_path)
 
     max_workers = 16
@@ -307,47 +326,52 @@ def Rewriter():
     total_samples = len(total_ids)
 
     print(f"Starting iterations (total: {total_rounds} rounds, parallel workers: {max_workers})")
-    print(f"[Run Config] dataset='{json_path}', samples={total_samples}, id_head={total_ids[:3]}{'...' if len(total_ids)>3 else ''}")
+    print(f"[Run Config] dataset='{json_path}', samples={total_samples}, id_head={total_ids[:3]}{'...' if len(total_ids) > 3 else ''}")
 
     for iteration in tqdm(total_iterations, desc="Overall progress", unit="round"):
         print(f"\n===== Round {iteration}/{total_rounds} =====")
 
-        # -------- Evaluation --------
+        # 1) Evaluation feedback (text critique)
         print(f"Round {iteration} - Evaluation (total: {total_samples} IDs)")
         eval_counter = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            eval_futures = [executor.submit(get_save_evaluation_feedback, json_path, id) for id in total_ids]
+            eval_futures = [executor.submit(get_save_evaluation_feedback, json_path, _id) for _id in total_ids]
             with tqdm(total=total_samples, desc=f"Round {iteration} - Evaluation", unit="sample") as pbar:
                 for future in as_completed(eval_futures):
-                    id_, status = future.result()
+                    _id, status = future.result()
                     count_status(eval_counter, status)
                     pbar.update(1)
-                    pbar.set_postfix(last_id=id_, status=status)
+                    pbar.set_postfix(last_id=_id, status=status)
         print(f"[Eval Summary][iter {iteration}] " + " | ".join(f"{k}:{v}" for k, v in sorted(eval_counter.items())))
 
-        # -------- Generation --------
+        # 2) Generation (attack): IMPORTANT change -> pass iteration into worker
         print(f"Round {iteration} - Generation (total: {total_samples} IDs)")
         gen_counter = {}
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            attack_futures = [executor.submit(get_save_attacking_feedback, json_path, id) for id in total_ids]
+            attack_futures = [executor.submit(get_save_attacking_feedback, json_path, _id, iteration) for _id in total_ids]
             with tqdm(total=total_samples, desc=f"Round {iteration} - Generation", unit="sample") as pbar:
                 for future in as_completed(attack_futures):
-                    id_, status = future.result()
+                    _id, status = future.result()
                     count_status(gen_counter, status)
                     pbar.update(1)
-                    pbar.set_postfix(last_id=id_, status=status)
+                    pbar.set_postfix(last_id=_id, status=status)
         print(f"[Gen  Summary][iter {iteration}] " + " | ".join(f"{k}:{v}" for k, v in sorted(gen_counter.items())))
 
         sanity_check(json_path, label=f"after Generation before evaluation (iter {iteration})")
 
+        # 3) Metric evaluation (and per-news tracking)
         dataset = create_dataset(json_path)
-        eval_results = evaluate_text_quality(dataset, iteration=iteration)
+        eval_results = evaluate_with_per_news_tracking(dataset, iteration=iteration, per_news_evaluator=per_news_evaluator)
         save_metrics_to_json(eval_results, result_path)
+
+        # 4) Move gpt_news -> pre_gpt_news for next iteration
         update_gpt_news(json_path)
         print(f"Round {iteration}/{total_rounds} completed\n")
 
+    per_news_evaluator.export_to_excel()
     plot_metrics()
     process_and_save_txts(json_path, text_path)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     Rewriter()
