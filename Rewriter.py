@@ -302,7 +302,7 @@ def process_and_save_txts(input_file: str, output_dir: str):
 
 def Rewriter():
     result_path = "result/evaluation_result.json"
-    json_path = "dataset/cnn_dailymail_debug.json"
+    json_path = "dataset/cnn_dailymail.json"
     text_path = "result/news"
 
     per_news_evaluator = PerNewsEvaluation()
