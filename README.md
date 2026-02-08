@@ -8,15 +8,19 @@ This project is a news optimizing and rewriting tool for the New News Broadcasti
 
 ## Overview
 
-This project provides a comprehensive pipeline for generating, evaluating, and improving news articles based on given summaries. It leverages natural language processing techniques and large language models (LLMs) to optimize news content, ensuring it meets journalistic standards in terms of clarity, coherence, and factual accuracy.
+This project provides an end-to-end pipeline for generating, evaluating, and improving news articles based on given summaries. It uses:
+- Local embedding models for similarity & SMS evaluation
+- LLM APIs for evaluation feedback (critique) and iterative rewriting (generation)
+- Multi-metric evaluation and visualization across iterations
+- Per-news metric tracking to enable iteration-aware, sample-specific improvement guidance
 
 ## Key Features
 
-- **News Generation**: Generate initial news articles from summaries using state-of-the-art LLMs.
-- **Iterative Rewriting**: Refine news content through iterative optimization based on evaluation feedback.
-- **Quality Evaluation**: Assess news quality using multiple metrics (BERTScore, SMS, GPTScore, G-Eval).
-- **Similarity Matching**: Identify similar news articles to use as reference for improvement.
-- **Visualization**: Generate visual reports of evaluation metrics to track performance across iterations.
+- Similarity Matching (Top-5): Retrieve 5 most similar summaries as exemplars using sentence-transformers embeddings.
+- Iterative Rewriting: Improve machine news in multiple rounds using exemplar style + metric-driven guidance.
+- Quality Evaluation: Evaluate with BERTScore, SMS (Sentence Movers Similarity), GPTScore, and G-Eval dimensions.
+- Per-News Tracking: Store per-sample metrics by news_id across iterations for targeted improvement suggestions.
+- Visualization: Plot metric trends across rounds and save figures.
 
 ## File Structure
 
@@ -27,41 +31,65 @@ NNB-News-Rewriter/
 │   ├── __init__.py
 │   ├── prompt.py
 │   ├── evaluation.py
+│   ├── per_news_evaluation.py
 │   └── visualization.py
 ├── dataset/
-│   ├── cnn_dailymail.json
+│   ├── cnn_dailymail_debug.json   # default in Rewriter.py
 │   └── dataset.py
 ├── result/
+│   ├── evaluation_result.json
+│   ├── per_news_metrics.json
 │   ├── metrics_visualization.png
-│   └── evaluation_result.json
+│   └── news/                      # exported txts per sample
 ├── local_models/
 ├── requirements.txt
 └── README.md
 ```
 
-- `Rewriter.py`: Core module for iterative news rewriting, integrating LLM calls and feedback loops.
-- `utils/evaluation.py`: Implements various evaluation metrics to assess news article quality.
-- `utils/prompt.py`: Handles prompt generation for LLM interactions, including evaluation criteria and rewriting guidelines.
-- `utils/visualization.py`: Generates visualizations of evaluation metrics to monitor performance.
-- `dataset/cnn_dailymail.json`: Example dataset (CNN/DailyMail) used for training and testing.
-- `dataset/dataset.py`: Processes datasets to generate initial machine-written news from summaries.
+## Key Files
+
+- Rewriter.py  
+  Main iterative loop (evaluation feedback → generation → metric evaluation → iteration update).
+
+- utils/prompt.py  
+  Prompt builders for evaluation and rewriting, including length control and per-news optimization guidance.
+
+- utils/evaluation.py  
+  Metric computation: BERTScore, SMS, GPTScore, and G-Eval.
+
+- utils/per_news_evaluation.py  
+  Per-news, per-iteration metric tracking (stored in result/per_news_metrics.json).
+
+- utils/visualization.py  
+  Visualization of metric trends across iterations.
 
 ## Dependencies
 
 Install dependencies via pip:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ## Configuration
 
-Set environment variables for API access in python files Rewriter.py, evaluation.py, dataset.py:
+### Required Environment Variables
+
 ```bash
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_API_BASE="your-api-base-url"
 ```
 
-## Preparing Models
+### Optional Environment Variables
+
+```bash
+export EVAL_MODEL="deepseek-ai/DeepSeek-V3.2-Exp"
+export BERTSCORE_BATCH_SIZE=16
+```
+
+Note: PARALLEL_WORKERS = 8 is fixed in utils/evaluation.py.
+
+## Preparing Local Models
 
 You can download these models from the [Hugging Face Hub](https://huggingface.co/) or [ModelScope](https://modelscope.cn/home) and place them in the corresponding directories, or use the `sentence-transformers` library to cache them locally:
 
@@ -88,24 +116,41 @@ modelscope download --model sentence-transformers/all-MiniLM-L6-v2
 modelscope download --model sentence-transformers/all-mpnet-base-v2
 ```
 
-## Usage
-### 1. Dataset Preparation
+## Dataset Preparation
 
 We provide a 1000 news articles dataset cnn_dailymail.json. You can utilize it directly.
 
 You can obtain news from [Hugging Face Hub](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles. After convert parquet files to json files, you need to run dataset/dataset.py to add machine_news content.
 
-### 2. Run Iterative Rewriting
-Run the Rewriter function in Rewriter.py:
+## Usage
+
+Run iterative rewriting:
+
 ```python
 python Rewriter.py
 ```
-The Rewriter functions iteratively improve news articles using similar news references, quality feedback, and LLMs, enhancing quality while staying true to the original summary.
+
+## Outputs
+
+- result/evaluation_result.json  
+  Average metrics per iteration.
+
+- result/per_news_metrics.json  
+  Per-news metrics across iterations.
+
+- result/metrics_visualization.png  
+  Metric trend plots.
+
+- result/news/news_{id}.txt  
+  Exported cleaned news text files.
 
 ## Notes
-- The system uses both local models (e.g., all-MiniLM-L6-v2 for similarity) and external LLM APIs for generation/evaluation.
-- Evaluation metrics include both automated scores (BERTScore, SMS) and LLM-based assessments (GPTScore, G-Eval).
-- Iterative refinement leverages similar news articles as references to improve content quality.
+
+- The summary is the ONLY factual source.
+- Length is controlled to roughly match the human-written article.
+- Expansion is allowed only via non-factual journalistic writing.
+- No new entities, numbers, dates, or quotes are allowed.
+- Per-news tracking enables targeted, iteration-aware optimization.
 
 ## Contributors
 - [lizhizhongpingguo](https://github.com/lizhizhongpingguo) - Write the top5_similar function for prompt.py to extracting similar news IDs
