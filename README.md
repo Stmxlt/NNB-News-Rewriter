@@ -34,13 +34,13 @@ NNB-News-Rewriter/
 │   ├── per_news_evaluation.py
 │   └── visualization.py
 ├── dataset/
-│   ├── cnn_dailymail_debug.json   # default in Rewriter.py
+│   ├── cnn_dailymail_debug.json
 │   └── dataset.py
 ├── result/
 │   ├── evaluation_result.json
 │   ├── per_news_metrics.json
 │   ├── metrics_visualization.png
-│   └── news/                      # exported txts per sample
+│   └── news/
 ├── local_models/
 ├── requirements.txt
 └── README.md
