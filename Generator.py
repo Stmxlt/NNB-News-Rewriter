@@ -25,7 +25,7 @@ SIMILARITY_MODEL_PATH = "./local_models/all-MiniLM-L6-v2"
 TOP_K = 5
 OUTPUT_LANGUAGE = "English"
 
-GEN_MODEL = os.getenv("GEN_MODEL", "target_LLM_name")
+GEN_MODEL = os.getenv("GEN_MODEL", "moonshotai/Kimi-K2-Instruct-0905")
 TEMPERATURE = 0.4
 MAX_TOKENS = 4096
 
@@ -229,3 +229,4 @@ def run_once() -> Tuple[str, str, List[SimilarItem]]:
 if __name__ == "__main__":
 
     out_path, _, similars = run_once()
+
