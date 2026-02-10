@@ -20,13 +20,14 @@ This project provides an end-to-end pipeline for generating, evaluating, and imp
 - Iterative Rewriting: Improve machine news in multiple rounds using exemplar style + metric-driven guidance.
 - Quality Evaluation: Evaluate with BERTScore, SMS (Sentence Movers Similarity), GPTScore, and G-Eval dimensions.
 - Per-News Tracking: Store per-sample metrics by news_id across iterations for targeted improvement suggestions.
-- Visualization: Plot metric trends across rounds and save figures.
+- One-shot News Generation: Generate a complete news article directly from a user-provided summary using high-quality exemplar news.
 
 ## File Structure
 
 ```plaintext
 NNB-News-Rewriter/
 ├── Rewriter.py
+├── Generator.py
 ├── utils/
 │   ├── __init__.py
 │   ├── prompt.py
@@ -35,6 +36,7 @@ NNB-News-Rewriter/
 │   └── visualization.py
 ├── dataset/
 │   ├── cnn_dailymail_debug.json
+│   ├── rewrited_cnn_dailymail.json
 │   └── dataset.py
 ├── result/
 │   ├── evaluation_result.json
@@ -42,26 +44,10 @@ NNB-News-Rewriter/
 │   ├── metrics_visualization.png
 │   └── news/
 ├── local_models/
+├── user_news_abstract.txt
 ├── requirements.txt
 └── README.md
 ```
-
-## Key Files
-
-- Rewriter.py  
-  Main iterative loop (evaluation feedback → generation → metric evaluation → iteration update).
-
-- utils/prompt.py  
-  Prompt builders for evaluation and rewriting, including length control and per-news optimization guidance.
-
-- utils/evaluation.py  
-  Metric computation: BERTScore, SMS, GPTScore, and G-Eval.
-
-- utils/per_news_evaluation.py  
-  Per-news, per-iteration metric tracking (stored in result/per_news_metrics.json).
-
-- utils/visualization.py  
-  Visualization of metric trends across iterations.
 
 ## Dependencies
 
@@ -86,8 +72,6 @@ export OPENAI_API_BASE="your-api-link"
 export EVAL_MODEL="deepseek-ai/DeepSeek-V3.2-Exp"
 export BERTSCORE_BATCH_SIZE=16
 ```
-
-Note: PARALLEL_WORKERS = 8 is fixed in utils/evaluation.py.
 
 ## Preparing Local Models
 
@@ -122,6 +106,28 @@ We provide a 1000 news articles dataset cnn_dailymail.json. You can utilize it d
 
 You can obtain news from [Hugging Face Hub](https://huggingface.co/datasets/abisee/cnn_dailymail) for more news articles. After convert parquet files to json files, you need to run dataset/dataset.py to add machine_news content.
 
+All dataset files share the same schema:
+
+```json
+{
+  "id": "...",
+  "abstract": "...",
+  "human_news": "...",
+  "machine_news": "...",
+  "evaluation": "",
+  "gpt_news": "",
+  "pre_gpt_news": "",
+  "similar": []
+}
+```
+
+- `cnn_dailymail.json`  
+  Raw baseline dataset. Before each run, work-related fields are cleared.
+
+## Generator
+
+`Generator.py` provides a one-shot news generation function. Given a single user summary `user_news_abstract.txt`, it retrieves similar summaries from the working dataset, uses their high-quality news as exemplars, and generates a complete news article strictly grounded in the input summary.
+
 ## Usage
 
 Run iterative rewriting:
@@ -130,27 +136,35 @@ Run iterative rewriting:
 python Rewriter.py
 ```
 
+Run one-shot news generation:
+
+```python
+python Generator.py
+```
+
 ## Outputs
 
-- result/evaluation_result.json  
+- `result/evaluation_result.json`  
   Average metrics per iteration.
 
-- result/per_news_metrics.json  
+- `result/per_news_metrics.json`  
   Per-news metrics across iterations.
 
-- result/metrics_visualization.png  
+- `result/metrics_visualization.png`  
   Metric trend plots.
 
-- result/news/news_{id}.txt  
-  Exported cleaned news text files.
+- `result/news/news_{id}.txt`  
+  Exported cleaned or generated news text files.
+
+- `result/user_generated_news.txt`  
+  Exported generated news text files based on `user_news_abstract.txt`.
 
 ## Notes
 
 - The summary is the ONLY factual source.
-- Length is controlled to roughly match the human-written article.
-- Expansion is allowed only via non-factual journalistic writing.
 - No new entities, numbers, dates, or quotes are allowed.
-- Per-news tracking enables targeted, iteration-aware optimization.
+- Iterative rewriting and one-shot generation share the same dataset schema.
+- Training, rewriting, and generation always operate on `rewrited_cnn_dailymail.json`.
 
 ## Contributors
 - [lizhizhongpingguo](https://github.com/lizhizhongpingguo) - Write the top5_similar function for prompt.py to extracting similar news IDs
