@@ -25,12 +25,12 @@ SIMILARITY_MODEL_PATH = "./local_models/all-MiniLM-L6-v2"
 TOP_K = 5
 OUTPUT_LANGUAGE = "English"
 
-GEN_MODEL = os.getenv("GEN_MODEL", "moonshotai/Kimi-K2-Instruct-0905")
+GEN_MODEL = os.getenv("GEN_MODEL", "target_LLM_name")
 TEMPERATURE = 0.4
 MAX_TOKENS = 4096
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "sk-tivywyulofozvjneifqxrqqtbkhknkgmfwnrodmywsscozmy")
-OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.siliconflow.cn/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "your-api-key")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "your-api-link")
 OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "120"))
 
 OUTPUT_DIR = "result/"
@@ -227,4 +227,5 @@ def run_once() -> Tuple[str, str, List[SimilarItem]]:
 
 
 if __name__ == "__main__":
+
     out_path, _, similars = run_once()
