@@ -86,7 +86,7 @@ def create_dataset(json_path: str) -> list:
     Required:
       - id
       - human_news (non-empty)
-      - abstract (non-empty)
+      - summary (non-empty)
 
     Optional but recommended for evaluation:
       - gpt_news / pre_gpt_news / machine_news (at least one non-empty)
@@ -107,8 +107,8 @@ def create_dataset(json_path: str) -> list:
 
         for item in tqdm(raw_dataset, desc="[Data Loading] Processing dataset"):
             human_news = _safe_strip(item.get("human_news", ""))
-            abstract = _safe_strip(item.get("abstract", ""))
-            if "id" not in item or not human_news or not abstract:
+            summary = _safe_strip(item.get("summary", ""))
+            if "id" not in item or not human_news or not summary:
                 dropped += 1
                 continue
 
@@ -121,7 +121,7 @@ def create_dataset(json_path: str) -> list:
 
             new_item = dict(item)
             new_item["human_news"] = human_news
-            new_item["abstract"] = abstract
+            new_item["summary"] = summary
             new_item["gpt_news"] = gpt_news
             new_item["pre_gpt_news"] = pre_gpt_news
             if "machine_news" in item:
