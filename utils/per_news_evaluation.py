@@ -322,19 +322,19 @@ def get_per_news_improvement_suggestions(
     suggestions: Dict[str, str] = {}
 
     # BERTScore
-    if current_metrics.get("bert_score", 0) < previous_metrics.get("bert_score", 0) - 0.01:
+    if current_metrics.get("bert_score", 0) < previous_metrics.get("bert_score", 0) - 0.03:
         suggestions["bert_score"] = "Improve semantic similarity: reuse more vocabulary and phrasing from the human news."
     elif current_metrics.get("bert_score", 0) > previous_metrics.get("bert_score", 0) + 0.01:
         suggestions["bert_score"] = "Good improvement: BERTScore increased; keep the current strategy."
 
     # SMS
-    if current_metrics.get("sms", 0) < previous_metrics.get("sms", 0) - 0.01:
+    if current_metrics.get("sms", 0) < previous_metrics.get("sms", 0) - 0.03:
         suggestions["sms"] = "Improve sentence structure: adjust ordering and structure to better match the human news."
     elif current_metrics.get("sms", 0) > previous_metrics.get("sms", 0) + 0.01:
         suggestions["sms"] = "Good improvement: structural similarity increased; keep it up."
 
     # GPTScore
-    if current_metrics.get("gptscore", 0) < previous_metrics.get("gptscore", 0) - 0.01:
+    if current_metrics.get("gptscore", 0) < previous_metrics.get("gptscore", 0) - 0.03:
         suggestions["gptscore"] = "Improve overall quality: enhance content, structure, and language across the article."
     elif current_metrics.get("gptscore", 0) > previous_metrics.get("gptscore", 0) + 0.01:
         suggestions["gptscore"] = "Good improvement: overall quality increased; keep the current strategy."
@@ -345,7 +345,7 @@ def get_per_news_improvement_suggestions(
         cur_v = current_metrics.get(key, 0)
         prev_v = previous_metrics.get(key, 0)
 
-        if cur_v < prev_v - 0.01:
+        if cur_v < prev_v - 0.05:
             if dim == "coherence":
                 suggestions[key] = "Strengthen coherence: ensure clear logical links between paragraphs."
             elif dim == "consistency":
