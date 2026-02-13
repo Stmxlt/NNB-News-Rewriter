@@ -54,8 +54,10 @@ def _log_none_strip(process_name: str, target_id):
             _none_strip_error_ids[process_name] = set()
         _none_strip_error_ids[process_name].add(str(target_id))
 
+
 def _is_none_strip_error(e: Exception) -> bool:
     return "'NoneType' object has no attribute 'strip'" in str(e)
+
 
 def atomic_update_json_field(json_path: str, target_id, updates: dict) -> bool:
     target_id_str = str(target_id)
@@ -72,6 +74,7 @@ def atomic_update_json_field(json_path: str, target_id, updates: dict) -> bool:
             dict2json(data, json_path)
     return found
 
+
 def load_ids_from_json(json_path: str):
     try:
         with file_rw_lock:
@@ -81,6 +84,7 @@ def load_ids_from_json(json_path: str):
     except Exception as e:
         print(f"[Config] Failed to load ids from {json_path}: {e}")
         return []
+
 
 def precompute_similar_ids(json_path: str):
     with file_rw_lock:
@@ -114,6 +118,7 @@ def precompute_similar_ids(json_path: str):
     with file_rw_lock:
         dict2json(news_data, json_path)
 
+
 def update_gpt_news(json_path: str):
     with file_rw_lock:
         news_data = json2dict(json_path)
@@ -134,6 +139,7 @@ def update_gpt_news(json_path: str):
                 else:
                     raise
         dict2json(news_data, json_path)
+
 
 def save_metrics_to_json(eval_results: dict, json_path: str):
     save_data = {
@@ -156,6 +162,7 @@ def save_metrics_to_json(eval_results: dict, json_path: str):
     except Exception as e:
         print(f"Failed to save metrics: {str(e)}")
 
+
 def reset_metrics_file(json_path: str):
     try:
         with file_rw_lock:
@@ -163,6 +170,34 @@ def reset_metrics_file(json_path: str):
         print(f"Successfully reset metrics file: {json_path}")
     except Exception as e:
         print(f"Failed to reset metrics file: {str(e)}")
+
+
+
+def reset_dataset_work_fields(json_path: str):
+    """
+    Clear per-run working fields in-place:
+      evaluation, gpt_news, pre_gpt_news, similar
+    Keeps: id, summary, human_news, machine_news (and any other fields untouched).
+    """
+    with file_rw_lock:
+        data = json2dict(json_path)
+        for item in data:
+            item["evaluation"] = ""
+            item["gpt_news"] = ""
+            item["pre_gpt_news"] = ""
+            item["similar"] = []
+        dict2json(data, json_path)
+        print(f"[Init] Cleared work fields in: {json_path}, items={len(data)}")
+
+
+def clone_dataset(src_json_path: str, dst_json_path: str):
+    """
+    Copy src_json_path -> dst_json_path (deep copy via JSON serialization).
+    """
+    with file_rw_lock:
+        data = json2dict(src_json_path)
+        dict2json(data, dst_json_path)
+        print(f"[Init] Cloned dataset: {src_json_path} -> {dst_json_path}, items={len(data)}")
 
 @backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
 def generate_eval_feedback(eval_prompt: str) -> str:
@@ -175,6 +210,7 @@ def generate_eval_feedback(eval_prompt: str) -> str:
     )
     return response.choices[0].message.content
 
+
 @backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
 def generate_attack_feedback(attack_prompt: str) -> str:
     messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": attack_prompt}]
@@ -185,6 +221,7 @@ def generate_attack_feedback(attack_prompt: str) -> str:
         max_tokens=16384,
     )
     return response.choices[0].message.content
+
 
 def get_save_evaluation_feedback(json_path: str, target_id):
     try:
@@ -213,6 +250,7 @@ def get_save_evaluation_feedback(json_path: str, target_id):
             _log_none_strip("get_save_evaluation_feedback", target_id)
         print(f"Evaluation failed (ID: {target_id}): {str(e)}")
         return target_id, "error"
+
 
 def get_save_attacking_feedback(json_path: str, target_id, iteration: int):
     """
@@ -263,6 +301,7 @@ def get_save_attacking_feedback(json_path: str, target_id, iteration: int):
         print(f"[GenAPI] id={target_id} critical failure: {str(e)}")
         return target_id, "critical_error"
 
+
 def sanity_check(json_path: str, label: str = ""):
     try:
         with file_rw_lock:
@@ -277,9 +316,11 @@ def sanity_check(json_path: str, label: str = ""):
     except Exception as e:
         print(f"[Sanity {label}] check failed: {e}")
 
+
 def count_status(counter: dict, status: str):
     with _error_lock:
         counter[status] = counter.get(status, 0) + 1
+
 
 def process_and_save_txts(input_file: str, output_dir: str):
     os.makedirs(output_dir, exist_ok=True)
@@ -300,27 +341,24 @@ def process_and_save_txts(input_file: str, output_dir: str):
             with open(txt_path, "w", encoding="utf-8") as txt_file:
                 txt_file.write(content)
 
+
 def Rewriter():
     result_path = "result/evaluation_result.json"
-    json_path = "dataset/cnn_dailymail.json"
+    raw_json_path = "dataset/cnn_dailymail.json"
+    json_path = "dataset/rewrited_cnn_dailymail.json"
     text_path = "result/news"
 
     per_news_evaluator = PerNewsEvaluation()
 
     reset_metrics_file(json_path=result_path)
 
-    with file_rw_lock:
-        data = json2dict(json_path)
-        for item in data:
-            item["pre_gpt_news"] = ""
-            item["gpt_news"] = ""
-            item["evaluation"] = ""
-        dict2json(data, json_path)
+    reset_dataset_work_fields(raw_json_path)
+    clone_dataset(raw_json_path, json_path)
 
     precompute_similar_ids(json_path)
 
     max_workers = 16
-    total_iterations = range(1, 6)
+    total_iterations = range(1, 11)
     total_ids = load_ids_from_json(json_path)
     total_rounds = len(total_iterations)
     total_samples = len(total_ids)
