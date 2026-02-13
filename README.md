@@ -44,7 +44,7 @@ NNB-News-Rewriter/
 │   ├── metrics_visualization.png
 │   └── news/
 ├── local_models/
-├── user_news_abstract.txt
+├── user_news_summary.txt
 ├── requirements.txt
 └── README.md
 ```
@@ -111,7 +111,7 @@ All dataset files share the same schema:
 ```json
 {
   "id": "...",
-  "abstract": "...",
+  "summary": "...",
   "human_news": "...",
   "machine_news": "...",
   "evaluation": "",
@@ -126,7 +126,7 @@ All dataset files share the same schema:
 
 ## Generator
 
-`Generator.py` provides a one-shot news generation function. Given a single user summary `user_news_abstract.txt`, it retrieves similar summaries from the working dataset, uses their high-quality news as exemplars, and generates a complete news article strictly grounded in the input summary.
+`Generator.py` provides a one-shot news generation function. Given a single user summary `user_news_summary.txt`, it retrieves similar summaries from the working dataset, uses their high-quality news as exemplars, and generates a complete news article strictly grounded in the input summary.
 
 ## Usage
 
@@ -157,7 +157,7 @@ python Generator.py
   Exported cleaned or generated news text files.
 
 - `result/user_generated_news.txt`  
-  Exported generated news text files based on `user_news_abstract.txt`.
+  Exported generated news text files based on `user_news_summary.txt`.
 
 ## Notes
 
