@@ -74,12 +74,12 @@ def save_text(text: str, out_path: str, encoding: str = "utf-8") -> None:
 class SimilarItem:
     id: str
     score: float
-    abstract: str
+    summary: str
     exemplar_news: str
 
 class SimilarityRetriever:
     """
-    Retrieve top-K similar items from CNN/DailyMail dataset based on abstract similarity.
+    Retrieve top-K similar items from CNN/DailyMail dataset based on summary similarity.
     Uses SentenceTransformer + cosine similarity.
 
     Exemplar news preference order:
@@ -96,7 +96,7 @@ class SimilarityRetriever:
 
         self._loaded = False
         self._items: List[Dict[str, Any]] = []
-        self._abstracts: List[str] = []
+        self._summarys: List[str] = []
         self._ids: List[str] = []
         self._embs = None
 
@@ -107,26 +107,26 @@ class SimilarityRetriever:
         raw = json2dict(self.dataset_json)
 
         items: List[Dict[str, Any]] = []
-        abstracts: List[str] = []
+        summarys: List[str] = []
         ids: List[str] = []
 
         for it in raw:
             _id = str(it.get("id", "")).strip()
-            abs_ = (it.get("abstract") or "").strip()
+            abs_ = (it.get("summary") or "").strip()
             if not _id or not abs_:
                 continue
             items.append(it)
-            abstracts.append(abs_)
+            summarys.append(abs_)
             ids.append(_id)
 
         if not items:
-            raise ValueError(f"No valid items (need 'id' and 'abstract') found in {self.dataset_json}")
+            raise ValueError(f"No valid items (need 'id' and 'summary') found in {self.dataset_json}")
 
         self._items = items
-        self._abstracts = abstracts
+        self._summarys = summarys
         self._ids = ids
 
-        self._embs = self.model.encode(self._abstracts, convert_to_tensor=False)
+        self._embs = self.model.encode(self._summarys, convert_to_tensor=False)
         self._loaded = True
 
     @staticmethod
@@ -137,14 +137,14 @@ class SimilarityRetriever:
                 return v.strip()
         return ""
 
-    def topk(self, query_abstract: str, k: int) -> List[SimilarItem]:
-        query_abstract = (query_abstract or "").strip()
-        if not query_abstract:
+    def topk(self, query_summary: str, k: int) -> List[SimilarItem]:
+        query_summary = (query_summary or "").strip()
+        if not query_summary:
             raise ValueError("Empty query summary")
 
         self.load()
 
-        q_emb = self.model.encode([query_abstract], convert_to_tensor=False)[0]
+        q_emb = self.model.encode([query_summary], convert_to_tensor=False)[0]
         sims = cosine_similarity([q_emb], self._embs)[0]
 
         idxs = list(range(len(self._ids)))
@@ -158,16 +158,16 @@ class SimilarityRetriever:
                 SimilarItem(
                     id=self._ids[i],
                     score=float(sims[i]),
-                    abstract=self._abstracts[i],
+                    summary=self._summarys[i],
                     exemplar_news=self._pick_exemplar_news(item),
                 )
             )
         return out
 
-def build_generation_prompt(user_abstract: str, exemplars: List[SimilarItem], language: str) -> str:
-    user_abstract = (user_abstract or "").strip()
-    if not user_abstract:
-        raise ValueError("User abstract is empty")
+def build_generation_prompt(user_summary: str, exemplars: List[SimilarItem], language: str) -> str:
+    user_summary = (user_summary or "").strip()
+    if not user_summary:
+        raise ValueError("User summary is empty")
 
     inst = f"""You are an expert news writer.
 
@@ -194,11 +194,11 @@ Output ONLY the news article, with no extra commentary.
         news_text = ex.exemplar_news.strip() if ex.exemplar_news else "[MISSING EXEMPLAR ARTICLE]"
         ex_blocks.append(
             f"EXEMPLAR {idx} (similarity={ex.score:.4f}, id={ex.id}):\n"
-            f"Summary:\n{ex.abstract}\n\n"
+            f"Summary:\n{ex.summary}\n\n"
             f"Article:\n{news_text}\n"
         )
 
-    return inst + "\n\n" + "\n\n".join(ex_blocks) + "\n\n" + f"NEW SUMMARY:\n{user_abstract}\n\nWRITE THE NEWS ARTICLE NOW:"
+    return inst + "\n\n" + "\n\n".join(ex_blocks) + "\n\n" + f"NEW SUMMARY:\n{user_summary}\n\nWRITE THE NEWS ARTICLE NOW:"
 
 def generate_news_from_prompt(prompt: str) -> str:
     messages: List[ChatCompletionMessageParam] = [{"role": "user", "content": prompt}]
@@ -227,6 +227,4 @@ def run_once() -> Tuple[str, str, List[SimilarItem]]:
 
 
 if __name__ == "__main__":
-
     out_path, _, similars = run_once()
-
