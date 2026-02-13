@@ -47,19 +47,19 @@ def top5_similar(target_id, json_path: str):
     raw = json2dict(json_path)
     groups = []
     for g in raw:
-        if "id" in g and "abstract" in g:
-            groups.append({"id": str(g["id"]), "abstract": g["abstract"]})
+        if "id" in g and "summary" in g:
+            groups.append({"id": str(g["id"]), "summary": g["summary"]})
         else:
-            raise ValueError("Missing 'id' or 'abstract' in JSON entry")
+            raise ValueError("Missing 'id' or 'summary' in JSON entry")
 
-    id_to_abs = {g["id"]: g["abstract"] for g in groups}
+    id_to_abs = {g["id"]: g["summary"] for g in groups}
     target_id = str(target_id)
     if target_id not in id_to_abs:
         raise ValueError(f"ID {target_id} not found")
 
     target_abs = id_to_abs[target_id]
     others = [g for g in groups if g["id"] != target_id]
-    texts = [target_abs] + [g["abstract"] for g in others]
+    texts = [target_abs] + [g["summary"] for g in others]
     embs = MODEL.encode(texts, convert_to_tensor=False)
     sims = cosine_similarity([embs[0]], embs[1:])[0]
 
@@ -128,7 +128,7 @@ Please refer to the differences between human-written news and LLM news in the f
     prompt = evaluation_criteria + "\n\n"
     for i, example in enumerate(examples):
         prompt += f"Example{i + 1}:\n"
-        abstract = truncate_text(example["abstract"], per_part_tokens, "token")
+        summary = truncate_text(example["summary"], per_part_tokens, "token")
         human_news = truncate_text(example["human_news"], per_part_tokens, "token")
 
         pre_gpt_news = (example.get("pre_gpt_news") or "").strip()
@@ -136,12 +136,12 @@ Please refer to the differences between human-written news and LLM news in the f
         llm_news = truncate_text(pre_gpt_news if pre_gpt_news else machine_news, per_part_tokens, "token")
         llm_type = "Previous round GPT result" if pre_gpt_news else "Machine-generated result"
 
-        prompt += f"News summary: {abstract}\n"
+        prompt += f"News summary: {summary}\n"
         prompt += f"Human-written news: {human_news}\n"
         prompt += f"{llm_type}: {llm_news}\n\n"
 
     prompt += "News to be evaluated:\n"
-    target_abstract = truncate_text(target_news["abstract"], per_part_tokens, "token")
+    target_summary = truncate_text(target_news["summary"], per_part_tokens, "token")
     target_human = truncate_text(target_news["human_news"], per_part_tokens, "token")
 
     target_pre_gpt = (target_news.get("pre_gpt_news") or "").strip()
@@ -149,7 +149,7 @@ Please refer to the differences between human-written news and LLM news in the f
     target_llm = truncate_text(target_pre_gpt if target_pre_gpt else target_machine, per_part_tokens, "token")
     target_llm_type = "Previous round GPT result" if target_pre_gpt else "Machine-generated result"
 
-    prompt += f"News summary: {target_abstract}\n"
+    prompt += f"News summary: {target_summary}\n"
     prompt += f"Human-written news: {target_human}\n"
     prompt += f"{target_llm_type}: {target_llm}\n\n"
     prompt += "Please provide specific revision suggestions for the above LLM-generated news based on the evaluation criteria."
@@ -172,7 +172,7 @@ def _latest_completed_iteration_for_news(per_news_evaluator: PerNewsEvaluation, 
 
 def make_prompt_for_attacking(
     examples: List[Dict[str, Any]],
-    target_abstract: str,
+    target_summary: str,
     target_human_news: str,
     json_path: str,
     iteration: int,
@@ -256,7 +256,7 @@ You MUST NOT add:
 - Lexical flexibility: Do not optimize for high word overlap; paraphrase is allowed if meaning is preserved
 - Readability: Clear, professional, and engaging
 
-New summary: {target_abstract}
+New summary: {target_summary}
 
 Generate the news article now. Output only the news article:"""
 
@@ -267,7 +267,7 @@ Generate the news article now. Output only the news article:"""
         + 50
     )
 
-    all_abs_tokens = sum(string2token_nums(s.get("abstract", "") or "") for s in examples)
+    all_abs_tokens = sum(string2token_nums(s.get("summary", "") or "") for s in examples)
     BUDGET = 12000
     truncated_len = max(50, (BUDGET - fixed_tokens - all_abs_tokens) // (2 * len(examples)))
 
@@ -278,7 +278,7 @@ Generate the news article now. Output only the news article:"""
 
     blocks = []
     for s in examples:
-        abs_truncated = truncate_text(s.get("abstract") or "", truncated_len, "token")
+        abs_truncated = truncate_text(s.get("summary") or "", truncated_len, "token")
         pre_gpt = (s.get("pre_gpt_news") or "").strip()
         pre_text = pre_gpt if pre_gpt else (s.get("machine_news") or "").strip()
         pre_type = "Previous round GPT result" if pre_gpt else "Machine-generated result"
@@ -368,7 +368,7 @@ def make_attacking_prompt(json_path: str, target_id, iteration: int):
     examples = [news_dict[_id] for _id in example_ids]
     prompt, _ = make_prompt_for_attacking(
         examples,
-        target_news.get("abstract", ""),
+        target_news.get("summary", ""),
         target_news.get("human_news", ""),
         json_path,
         iteration,
