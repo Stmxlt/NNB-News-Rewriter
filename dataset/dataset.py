@@ -20,7 +20,7 @@ openai_client = OpenAI(
     base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
     timeout=120,
 )
-PROMPT_TEMPLATE = "Please create a complete and detailed news article based on the following news abstract. Keep the content coherent and logically clear, and ensure the language style complies with news reporting standards:\n{abstract}"
+PROMPT_TEMPLATE = "Please create a complete and detailed news article based on the following news summary. Keep the content coherent and logically clear, and ensure the language style complies with news reporting standards:\n{summary}"
 MAX_WORKERS = 16
 
 @backoff.on_exception(
@@ -29,9 +29,9 @@ MAX_WORKERS = 16
     max_time=60,
     max_tries=5
 )
-def generate_news(abstract):
+def generate_news(summary):
     messages: list[ChatCompletionMessageParam] = [
-        {"role": "user", "content": PROMPT_TEMPLATE.format(abstract=abstract)}
+        {"role": "user", "content": PROMPT_TEMPLATE.format(summary=summary)}
     ]
     response = openai_client.chat.completions.create(
         model="moonshotai/Kimi-K2-Instruct-0905",
@@ -51,7 +51,7 @@ def process_json_file(file_path):
         print(f"Total records to process: {total_records}")
         
         tasks = [
-            (idx, item.get("abstract", ""))
+            (idx, item.get("summary", ""))
             for idx, item in enumerate(data)
         ]
         
@@ -59,12 +59,12 @@ def process_json_file(file_path):
         
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             future_to_task = {
-                executor.submit(generate_news, abstract): (idx, abstract)
-                for idx, abstract in tasks
+                executor.submit(generate_news, summary): (idx, summary)
+                for idx, summary in tasks
             }
             
             for future in as_completed(future_to_task):
-                idx, abstract = future_to_task[future]
+                idx, summary = future_to_task[future]
                 try:
                     machine_news = future.result()
                     print(f"Generated news {idx + 1}/{total_records}")
