@@ -161,7 +161,7 @@ python Generator.py
 
 ## Notes
 
-- The summary is the ONLY factual source.
+- The summary and human_news are the ONLY factual source.
 - No new entities, numbers, dates, or quotes are allowed.
 - Iterative rewriting and one-shot generation share the same dataset schema.
 - Training, rewriting, and generation always operate on `rewrited_cnn_dailymail.json`.
