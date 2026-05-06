@@ -23,15 +23,21 @@ from utils.evaluation import create_dataset
 from utils.visualization import plot_metrics
 from utils.per_news_evaluation import PerNewsEvaluation, evaluate_with_per_news_tracking
 
-
 os.makedirs("result", exist_ok=True)
 print("===============Starting iteration===============")
 
 gpt_turbo_encoding = tiktoken.get_encoding("cl100k_base")
-openai_client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
-    base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
-    timeout=120
+
+llama_client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+    base_url=os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1"),
+    timeout=1200,
+)
+
+qwen_client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+    base_url=os.getenv("OPENAI_API_BASE", "http://localhost:8001/v1"),
+    timeout=1200,
 )
 
 openai.api_type = "open_ai"
@@ -119,11 +125,21 @@ def precompute_similar_ids(json_path: str):
         dict2json(news_data, json_path)
 
 
-def update_gpt_news(json_path: str):
+def update_gpt_news(json_path: str, rollback_ids: set = None):
+    if rollback_ids is None:
+        rollback_ids = set()
     with file_rw_lock:
         news_data = json2dict(json_path)
+        accepted = 0
+        rejected = 0
         for item in news_data:
             target_id = str(item.get("id", ""))
+            
+            if target_id in rollback_ids:
+                item["gpt_news"] = ""
+                rejected += 1
+                continue
+
             try:
                 g = item.get("gpt_news", "")
                 if g is None:
@@ -132,6 +148,7 @@ def update_gpt_news(json_path: str):
                 if isinstance(g, str) and g.strip():
                     item["pre_gpt_news"] = g
                     item["gpt_news"] = ""
+                    accepted += 1
             except AttributeError as e:
                 if _is_none_strip_error(e):
                     _log_none_strip("update_gpt_news", target_id)
@@ -139,6 +156,7 @@ def update_gpt_news(json_path: str):
                 else:
                     raise
         dict2json(news_data, json_path)
+        print(f"[Dataset Update] text passed: {accepted} passages, text rollback amount: {rejected} passages")
 
 
 def save_metrics_to_json(eval_results: dict, json_path: str):
@@ -199,28 +217,38 @@ def clone_dataset(src_json_path: str, dst_json_path: str):
         dict2json(data, dst_json_path)
         print(f"[Init] Cloned dataset: {src_json_path} -> {dst_json_path}, items={len(data)}")
 
-@backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
+@backoff.on_exception(backoff.expo, RateLimitError, max_time=1200, max_tries=5)
 def generate_eval_feedback(eval_prompt: str) -> str:
     messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": eval_prompt}]
-    response = openai_client.chat.completions.create(
-        model="moonshotai/Kimi-K2-Instruct-0905",
+    response = llama_client.chat.completions.create(
+        model="Meta-Llama-3.1-8B-Instruct",
         messages=messages,
         temperature=0.4,
         max_tokens=8192,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": False
+            }
+        }
     )
-    return response.choices[0].message.content
+    return (response.choices[0].message.content or "").strip()
 
 
-@backoff.on_exception(backoff.expo, RateLimitError, max_time=60, max_tries=5)
+@backoff.on_exception(backoff.expo, RateLimitError, max_time=1200, max_tries=5)
 def generate_attack_feedback(attack_prompt: str) -> str:
     messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": attack_prompt}]
-    response = openai_client.chat.completions.create(
-        model="moonshotai/Kimi-K2-Instruct-0905",
+    response = qwen_client.chat.completions.create(
+        model="Qwen3.5-9B", 
         messages=messages,
         temperature=0.4,
-        max_tokens=16384,
+        max_tokens=8192,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": False
+            }
+        }
     )
-    return response.choices[0].message.content
+    return (response.choices[0].message.content or "").strip()
 
 
 def get_save_evaluation_feedback(json_path: str, target_id):
@@ -344,7 +372,7 @@ def process_and_save_txts(input_file: str, output_dir: str):
 
 def Rewriter():
     result_path = "result/evaluation_result.json"
-    raw_json_path = "dataset/cnn_dailymail.json"
+    raw_json_path = "dataset/cnn_dailymail_updated.json"
     json_path = "dataset/rewrited_cnn_dailymail.json"
     text_path = "result/news"
 
@@ -357,8 +385,8 @@ def Rewriter():
 
     precompute_similar_ids(json_path)
 
-    max_workers = 16
-    total_iterations = range(1, 11)
+    max_workers = 4
+    total_iterations = range(1, 7)
     total_ids = load_ids_from_json(json_path)
     total_rounds = len(total_iterations)
     total_samples = len(total_ids)
@@ -402,9 +430,9 @@ def Rewriter():
         eval_results = evaluate_with_per_news_tracking(dataset, iteration=iteration, per_news_evaluator=per_news_evaluator)
         save_metrics_to_json(eval_results, result_path)
 
-        # 4) Move gpt_news -> pre_gpt_news for next iteration
-        update_gpt_news(json_path)
-        print(f"Round {iteration}/{total_rounds} completed\n")
+        # 4) Move gpt_news -> pre_gpt_news for improved ones
+        rollback_ids = eval_results.get("rollback_ids", set())
+        update_gpt_news(json_path, rollback_ids)
 
     per_news_evaluator.export_to_excel()
     plot_metrics()
