@@ -28,21 +28,21 @@ import ot
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"[Evaluation Module] Initialization completed, using device: {device}")
 
-LOCAL_BERT_PATH = "./local_models/bert-base-uncased"
-LOCAL_SMS_MODEL_PATH = "./local_models/all-mpnet-base-v2"
+LOCAL_BERT_PATH = "/root/autodl-tmp/bert-base-uncased"
+LOCAL_SMS_MODEL_PATH = "/root/autodl-tmp/all-mpnet-base-v2"
 
 BERTSCORE_BATCH_SIZE = int(os.getenv("BERTSCORE_BATCH_SIZE", "16"))
 
 # Required by user:
-PARALLEL_WORKERS = 8  # keep as 8
+PARALLEL_WORKERS = 4
 
 # Default eval model (you can override by passing model=...)
-DEFAULT_EVAL_MODEL = os.getenv("EVAL_MODEL", "deepseek-ai/DeepSeek-V3.2-Exp")
+DEFAULT_EVAL_MODEL = os.getenv("EVAL_MODEL", "Meta-Llama-3.1-8B-Instruct")
 
-openai_client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY", "your-api-key"),
-    base_url=os.getenv("OPENAI_API_BASE", "your-api-link"),
-    timeout=30,
+llama_client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
+    base_url=os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1"),
+    timeout=600,
 )
 
 # -----------------------------
@@ -196,7 +196,7 @@ def compute_gptscore(
     candidate: str,
     reference: str,
     model: str = DEFAULT_EVAL_MODEL,
-    max_tokens: int = 50,
+    max_tokens: int = 8192,
     temperature: float = 0.0,
 ) -> float:
     cand = (candidate or "").strip()
@@ -219,11 +219,16 @@ Score (0-1):
 """.strip()
 
     try:
-        resp = openai_client.chat.completions.create(
+        resp = llama_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
             max_tokens=max_tokens,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False
+                }
+            }
         )
         out = (resp.choices[0].message.content or "").strip()
         return _to_float01_maybe(out)
@@ -233,7 +238,7 @@ Score (0-1):
 # -----------------------------
 # Scheme A: single-call JSON eval (n_samples = 3 by repeating calls)
 # -----------------------------
-_json_re = re.compile(r"\{[\s\S]*\}")
+_json_re = re.compile(r"\{[\s\S]*?\}")
 
 def compute_llm_eval_a_once(
     candidate: str,
@@ -241,7 +246,7 @@ def compute_llm_eval_a_once(
     model: str = DEFAULT_EVAL_MODEL,
     max_token_length: int = 4000,
     temperature: float = 0.0,
-    max_tokens: int = 256,
+    max_tokens: int = 8192,
 ) -> Dict[str, float]:
     """
     One API call. Returns normalized [0,1] scores:
@@ -319,21 +324,27 @@ Machine-written news:
             "quality": to_01(obj.get("quality", 1)),
         }
 
-    resp = openai_client.chat.completions.create(
+    resp = llama_client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
         max_tokens=max_tokens,
         top_p=1.0,
+        extra_body={
+            "chat_template_kwargs": {
+                "enable_thinking": False
+            }
+        }
     )
-    out = (resp.choices[0].message.content or "").strip()
-    return parse_json_scores(out)
-
+    
+    cleaned_content = (resp.choices[0].message.content or "").strip()
+    return parse_json_scores(cleaned_content)
+    
 def compute_llm_eval_a(
     candidate: str,
     reference: str,
     model: str = DEFAULT_EVAL_MODEL,
-    n_samples: int = 3,           # REQUIRED BY USER
+    n_samples: int = 3,
     max_retries: int = 3,
     retry_delay: float = 0.8,
     **kwargs,
@@ -676,7 +687,7 @@ def evaluate_text_quality(data: list, iteration: Optional[int] = None, pre_detai
         for sample in sample_details:
             sample["current"]["bert_score"] = 0.0
 
-    # ---- Scheme A "G-Eval" current (n_samples=3, worker=8) ----
+    # ---- Scheme A "G-Eval" current----
     try:
         def eval_worker(cand: str, ref: str, sample_id: str) -> Tuple[str, Dict[str, float]]:
             try:
