@@ -5,6 +5,8 @@
 """
 
 import os
+import copy
+import numpy as np
 import json
 from typing import Dict, List, Any, Optional
 import datetime
@@ -254,10 +256,6 @@ def evaluate_with_per_news_tracking(
     iteration: Optional[int] = None,
     per_news_evaluator: Optional[PerNewsEvaluation] = None,
 ) -> Dict[str, Any]:
-    """
-    Wrapper that evaluates and stores per-news metrics in v3 format.
-    Also builds pre_detailed_metrics by pulling metrics from iteration-1 (same news_id).
-    """
     if per_news_evaluator is None:
         per_news_evaluator = PerNewsEvaluation()
 
@@ -267,19 +265,42 @@ def evaluate_with_per_news_tracking(
         storage = per_news_evaluator.load_storage()
         prev_key = _iter_key(prev_it)
 
-        prev_samples = []
+        prev_metrics_by_id: Dict[str, Dict[str, Any]] = {}
         for obj in storage:
             nid = str(obj.get("news_id", "")).strip()
             if not nid:
                 continue
-            if prev_key in obj and isinstance(obj.get(prev_key), dict):
-                prev_samples.append({
-                    "id": nid,
-                    "pre": {},
-                    "current": obj.get(prev_key, {}),
-                })
+            m = obj.get(prev_key, None)
+            if isinstance(m, dict):
+                prev_metrics_by_id[nid] = m
+
+        prev_samples: List[Dict[str, Any]] = []
+        for item in data:
+            nid = str(item.get("id", "")).strip()
+            
+            m = prev_metrics_by_id.get(nid, {}) if nid else {}
+            if not isinstance(m, dict):
+                m = {}
+                
+            prev_samples.append({
+                "id": nid,
+                "pre": {},
+                "current": m,
+            })
 
         if prev_samples:
+            def _get_geval(cur: Dict[str, Any], dim: str) -> float:
+                g = cur.get("g_eval", {})
+                if isinstance(g, dict) and dim in g:
+                    try:
+                        return float(g.get(dim, 0) or 0)
+                    except Exception:
+                        return 0.0
+                try:
+                    return float(cur.get(f"g_eval_{dim}", 0) or 0)
+                except Exception:
+                    return 0.0
+
             previous_detailed_metrics = {
                 "samples": prev_samples,
                 "metrics": {
@@ -287,20 +308,73 @@ def evaluate_with_per_news_tracking(
                         "bert_score": [s["current"].get("bert_score", 0) for s in prev_samples],
                         "sms": [s["current"].get("sms", 0) for s in prev_samples],
                         "gptscore": [s["current"].get("gptscore", 0) for s in prev_samples],
-                        "g_eval_coherence": [s["current"].get("g_eval_coherence", 0) for s in prev_samples],
-                        "g_eval_consistency": [s["current"].get("g_eval_consistency", 0) for s in prev_samples],
-                        "g_eval_fluency": [s["current"].get("g_eval_fluency", 0) for s in prev_samples],
-                        "g_eval_relevance": [s["current"].get("g_eval_relevance", 0) for s in prev_samples],
+                        "g_eval_coherence":   [_get_geval(s["current"], "coherence")   for s in prev_samples],
+                        "g_eval_consistency": [_get_geval(s["current"], "consistency") for s in prev_samples],
+                        "g_eval_fluency":     [_get_geval(s["current"], "fluency")     for s in prev_samples],
+                        "g_eval_relevance":   [_get_geval(s["current"], "relevance")   for s in prev_samples],
                     }
                 },
             }
 
     results = evaluate_text_quality(data, iteration=iteration, pre_detailed_metrics=previous_detailed_metrics)
 
+    rollback_ids = set()
     if iteration:
+        samples = results.get("detailed", {}).get("samples", [])
+        metrics_arrays = results.get("detailed", {}).get("metrics", {})
+
+        for i, sample in enumerate(samples):
+            pre = sample.get("pre", {})
+            cur = sample.get("current", {})
+
+            def c_sum(m):
+                g = m.get("g_eval", {})
+                g_avg = (g.get("coherence", 0) + g.get("consistency", 0) + 
+                         g.get("fluency", 0) + g.get("relevance", 0)) / 4.0 if g else 0.0
+                return m.get("bert_score", 0) + m.get("sms", 0) + m.get("gptscore", 0) + g_avg
+
+            if c_sum(cur) < c_sum(pre):
+                rollback_ids.add(sample.get("id"))
+                sample["current"] = copy.deepcopy(pre)
+                
+                for k in ["bert_score", "sms", "gptscore", "g_eval_coherence", "g_eval_consistency", "g_eval_fluency", "g_eval_relevance"]:
+                    if k in metrics_arrays.get("current", {}) and k in metrics_arrays.get("pre", {}):
+                        if i < len(metrics_arrays["current"][k]) and i < len(metrics_arrays["pre"][k]):
+                            metrics_arrays["current"][k][i] = metrics_arrays["pre"][k][i]
+
+        if rollback_ids:
+            print(f"[Rollback Intercept] rollback {len(rollback_ids)} news articles。")
+            
+            cur_arrays = metrics_arrays.get("current", {})
+            def mean(xs): return float(np.mean(xs)) if xs else 0.0
+            
+            cur_geval_avgs = []
+            n = len(cur_arrays.get("g_eval_coherence", []))
+            for i in range(n):
+                cur_geval_avgs.append(mean([
+                    cur_arrays.get("g_eval_coherence", [])[i] if i < len(cur_arrays.get("g_eval_coherence", [])) else 0,
+                    cur_arrays.get("g_eval_consistency", [])[i] if i < len(cur_arrays.get("g_eval_consistency", [])) else 0,
+                    cur_arrays.get("g_eval_fluency", [])[i] if i < len(cur_arrays.get("g_eval_fluency", [])) else 0,
+                    cur_arrays.get("g_eval_relevance", [])[i] if i < len(cur_arrays.get("g_eval_relevance", [])) else 0
+                ]))
+
+            results["current_average"] = {
+                "bert_score": mean(cur_arrays.get("bert_score", [])),
+                "sms": mean(cur_arrays.get("sms", [])),
+                "gptscore": mean(cur_arrays.get("gptscore", [])),
+                "g_eval_coherence": mean(cur_arrays.get("g_eval_coherence", [])),
+                "g_eval_consistency": mean(cur_arrays.get("g_eval_consistency", [])),
+                "g_eval_fluency": mean(cur_arrays.get("g_eval_fluency", [])),
+                "g_eval_relevance": mean(cur_arrays.get("g_eval_relevance", [])),
+                "g_eval_average": mean(cur_geval_avgs),
+            }
+            
+        results["rollback_ids"] = rollback_ids
+
         per_news_evaluator.store_current_iteration_metrics(iteration, results["detailed"])
 
     return results
+
 
 
 def get_per_news_improvement_suggestions(
@@ -345,7 +419,7 @@ def get_per_news_improvement_suggestions(
         cur_v = current_metrics.get(key, 0)
         prev_v = previous_metrics.get(key, 0)
 
-        if cur_v < prev_v - 0.05:
+        if cur_v < prev_v - 0.03:
             if dim == "coherence":
                 suggestions[key] = "Strengthen coherence: ensure clear logical links between paragraphs."
             elif dim == "consistency":
