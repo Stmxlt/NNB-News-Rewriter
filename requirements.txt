@@ -11,3 +11,4 @@ backoff
 transformers
 bert-score
 sentence-transformers
+vllm
