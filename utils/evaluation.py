@@ -37,11 +37,11 @@ BERTSCORE_BATCH_SIZE = int(os.getenv("BERTSCORE_BATCH_SIZE", "16"))
 PARALLEL_WORKERS = 4
 
 # Default eval model (you can override by passing model=...)
-DEFAULT_EVAL_MODEL = os.getenv("EVAL_MODEL", "Meta-Llama-3.1-8B-Instruct")
+DEFAULT_EVAL_MODEL = os.getenv("EVAL_MODEL", "Qwen3.5-9B")
 
-llama_client = OpenAI(
+qwen_client = OpenAI(
     api_key=os.getenv("OPENAI_API_KEY", "EMPTY"),
-    base_url=os.getenv("OPENAI_API_BASE", "http://localhost:8000/v1"),
+    base_url=os.getenv("OPENAI_API_BASE", "http://localhost:8001/v1"),
     timeout=600,
 )
 
@@ -219,7 +219,7 @@ Score (0-1):
 """.strip()
 
     try:
-        resp = llama_client.chat.completions.create(
+        resp = qwen_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=temperature,
@@ -324,7 +324,7 @@ Machine-written news:
             "quality": to_01(obj.get("quality", 1)),
         }
 
-    resp = llama_client.chat.completions.create(
+    resp = qwen_client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
