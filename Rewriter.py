@@ -220,8 +220,8 @@ def clone_dataset(src_json_path: str, dst_json_path: str):
 @backoff.on_exception(backoff.expo, RateLimitError, max_time=1200, max_tries=5)
 def generate_eval_feedback(eval_prompt: str) -> str:
     messages: list[ChatCompletionMessageParam] = [{"role": "user", "content": eval_prompt}]
-    response = llama_client.chat.completions.create(
-        model="Meta-Llama-3.1-8B-Instruct",
+    response = qwen_client.chat.completions.create(
+        model="Qwen3.5-9B",
         messages=messages,
         temperature=0.4,
         max_tokens=8192,
@@ -372,7 +372,7 @@ def process_and_save_txts(input_file: str, output_dir: str):
 
 def Rewriter():
     result_path = "result/evaluation_result.json"
-    raw_json_path = "dataset/cnn_dailymail_updated.json"
+    raw_json_path = "dataset/cnn_dailymail_sample200.json"
     json_path = "dataset/rewrited_cnn_dailymail.json"
     text_path = "result/news"
 
