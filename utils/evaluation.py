@@ -28,8 +28,8 @@ import ot
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"[Evaluation Module] Initialization completed, using device: {device}")
 
-LOCAL_BERT_PATH = "/root/autodl-tmp/bert-base-uncased"
-LOCAL_SMS_MODEL_PATH = "/root/autodl-tmp/all-mpnet-base-v2"
+LOCAL_BERT_PATH = "./local_models/bert-base-uncased"
+LOCAL_SMS_MODEL_PATH = "./local_models/all-mpnet-base-v2"
 
 BERTSCORE_BATCH_SIZE = int(os.getenv("BERTSCORE_BATCH_SIZE", "16"))
 
