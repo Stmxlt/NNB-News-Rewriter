@@ -15,7 +15,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from utils.per_news_evaluation import PerNewsEvaluation, get_per_news_improvement_suggestions
 
 gpt_turbo_encoding = tiktoken.get_encoding("cl100k_base")
-MODEL = SentenceTransformer("/root/autodl-tmp/all-MiniLM-L6-v2")
+MODEL = SentenceTransformer("./local_models/all-MiniLM-L6-v2")
 file_lock = threading.Lock()
 
 
